@@ -1,114 +1,169 @@
--- Tệp: fsm.lua (Đã liên kết toàn diện với ui.lua)
+-- Tệp: fsm.lua (Thêm logic kiểm tra Level và chọn Quest tự động)
 local HttpService = game:GetService("HttpService")
 local TweenService = game:GetService("TweenService")
 local Players = game:GetService("Players")
 
 local LocalPlayer = Players.LocalPlayer
 local CONFIG_URL = "https://raw.githubusercontent.com/hoangduc677/luau-game-data/main/config.json?t=" .. tostring(os.time())
+local QUESTS_URL = "https://raw.githubusercontent.com/hoangduc677/luau-game-data/main/quests.json?t=" .. tostring(os.time())
 local UI_URL = "https://raw.githubusercontent.com/hoangduc677/luau-game-data/main/ui.lua?t=" .. tostring(os.time())
 
--- Biến toàn cục điều khiển từ UI
 getgenv().DynamicSpeed = 150
 local FSM = {
     State = "IDLE",
-    Index = 1,
-    Tween = nil,
     Running = true
 }
 
--- 1. Nạp UI và truyền hàm callback
+-- 1. Nạp UI điều khiển
 local okUI, UIModule = pcall(function() return loadstring(game:HttpGet(UI_URL))() end)
 local Dashboard = nil
-
 if okUI and UIModule then
-    Dashboard = UIModule.CreateDashboard(
-        "⚡ HỆ THỐNG KAITUN FSM", 
-        function(isRunning) -- Hàm nhận sự kiện Bật/Dừng
-            FSM.Running = isRunning
-            if not isRunning and FSM.Tween then
-                FSM.Tween:Cancel()
-                FSM.Tween = nil
-            end
-        end,
-        function(newSpeed) -- Hàm nhận sự kiện đổi Tốc độ
-            getgenv().DynamicSpeed = newSpeed
-            print("[UI Event] Đã đổi tốc độ bay thành:", newSpeed)
-            -- Nếu đang bay, hủy tween cũ để nó áp dụng tốc độ mới ngay lập tức
-            if FSM.Tween then
-                FSM.Tween:Cancel()
-                FSM.Tween = nil
-            end
-        end
+    Dashboard = UIModule.CreateDashboard("⚡ KAITUN AUTO QUEST", 
+        function(isRunning) FSM.Running = isRunning end,
+        function(newSpeed) getgenv().DynamicSpeed = newSpeed end
     )
 end
 
--- 2. Tải Tọa Độ
-local function LoadConfig()
-    local ok1, raw = pcall(function() return game:HttpGet(CONFIG_URL) end)
+-- 2. Tải dữ liệu Tọa độ chung và Nhiệm vụ từ GitHub
+local function LoadJSONData(url)
+    local ok1, raw = pcall(function() return game:HttpGet(url) end)
     if not ok1 then return nil end
     local ok2, data = pcall(function() return HttpService:JSONDecode(raw) end)
     if not ok2 then return nil end
-
-    for _, loc in ipairs(data.Locations) do
-        local c = loc.Coords
-        loc.CFrame = CFrame.new(c[1], c[2], c[3])
-    end
     return data
 end
 
-local Config = LoadConfig()
-if not Config then return end
+local Config = LoadJSONData(CONFIG_URL)
+local QuestsData = LoadJSONData(QUESTS_URL)
+
+if not Config or not QuestsData then
+    warn("❌ Không thể tải file dữ liệu từ GitHub!")
+    return
+end
+
+-- 3. Hàm tự động quét Level hiện tại để chọn Quest chuẩn xác
+local function GetCurrentQuest()
+    -- Lấy level của người chơi (Mặc định trả về 1 nếu chưa load dữ liệu game)
+    local level = 1
+    pcall(function()
+        level = LocalPlayer.Data.Level.Value
+    end)
+
+    -- Xác định Sea dựa trên Level hoặc gộp toàn bộ danh sách để quét
+    local allQuests = {}
+    if QuestsData.Sea1 then for _, q in ipairs(QuestsData.Sea1) do table.insert(allQuests, q) end end
+    if QuestsData.Sea2 then for _, q in ipairs(QuestsData.Sea2) do table.insert(allQuests, q) end end
+    if QuestsData.Sea3 then for _, q in ipairs(QuestsData.Sea3) do table.insert(allQuests, q) end end
+
+    -- Tìm nhiệm vụ phù hợp với level cao nhất mà nhân vật đạt được
+    local bestQuest = allQuests[1]
+    for _, q in ipairs(allQuests) do
+        if level >= q.MinLv then
+            bestQuest = q
+        end
+    end
+
+    -- Chuyển đổi tọa độ NPC từ mảng [X, Y, Z] sang CFrame
+    if bestQuest and bestQuest.NPC then
+        bestQuest.NPCCFrame = CFrame.new(bestQuest.NPC[1], bestQuest.NPC[2], bestQuest.NPC[3])
+    end
+
+    return bestQuest
+end
 
 local function UpdateState(newState)
     FSM.State = newState
     if Dashboard then Dashboard.SetStatus(newState) end
 end
 
--- 3. Hành vi FSM
+-- 4. FSM Logic cập nhật theo nhiệm vụ động
 local Actions = {
     IDLE = function()
-        local target = Config.Locations[FSM.Index]
-        if not target then
+        local activeQuest = GetCurrentQuest()
+        if not activeQuest then
             UpdateState("COMPLETED")
-            FSM.Running = false
             return
         end
-        UpdateState("MOVING: " .. target.Name)
+        print("📜 Đang làm nhiệm vụ đánh quái:", activeQuest.Mob, "| Level yêu cầu:", activeQuest.MinLv)
+        UpdateState("GET_QUEST: " .. activeQuest.Mob)
     end,
 
-    MOVING = function()
-        local target = Config.Locations[FSM.Index]
+    GET_QUEST = function()
+        local activeQuest = GetCurrentQuest()
         local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
         if not hrp then return end
 
-        local dist = (hrp.Position - target.CFrame.Position).Magnitude
-        if dist <= 10 then
-            if FSM.Tween then FSM.Tween:Cancel(); FSM.Tween = nil end
-            UpdateState("WORK")
-            return
-        end
-
-        if not FSM.Tween then
-            local speed = getgenv().DynamicSpeed -- Lấy tốc độ linh hoạt từ UI
-            FSM.Tween = TweenService:Create(hrp, TweenInfo.new(dist / speed, Enum.EasingStyle.Linear), {CFrame = target.CFrame})
-            FSM.Tween:Play()
+        -- Bay tới NPC nhận nhiệm vụ
+        local dist = (hrp.Position - activeQuest.NPCCFrame.Position).Magnitude
+        if dist > 15 then
+            local speed = getgenv().DynamicSpeed
+            -- Tween tới NPC
+            local tween = TweenService:Create(hrp, TweenInfo.new(dist / speed, Enum.EasingStyle.Linear), {CFrame = activeQuest.NPCCFrame})
+            tween:Play()
+            task.wait(dist / speed)
+        else
+            -- Đã tới gần NPC -> Gọi Remote nhận nhiệm vụ
+            pcall(function()
+                local CommF = game:GetService("ReplicatedStorage"):WaitForChild("Remotes"):WaitForChild("CommF_")
+                CommF:InvokeServer("StartQuest", activeQuest.QuestName, activeQuest.QuestLv)
+            end)
+            task.wait(1)
+            UpdateState("FARMING")
         end
     end,
 
-    WORK = function()
-        task.wait(2)
-        FSM.Index += 1
-        UpdateState("IDLE")
+    FARMING = function()
+        -- Trạng thái này sẽ tìm quái dựa theo activeQuest.Mob ở bước sau
+        UpdateState("FIND_MOB")
+    end,
+
+    FIND_MOB = function()
+        local activeQuest = GetCurrentQuest()
+        local targetMob = nil
+        local shortestDist = 99999
+        local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+
+        if not hrp then return end
+
+        -- Quét thư mục Enemies trong workspace để tìm đúng loại quái nhiệm vụ
+        if workspace:FindFirstChild("Enemies") then
+            for _, mob in ipairs(workspace.Enemies:GetChildren()) do
+                if mob:FindFirstChild("Humanoid") and mob:FindFirstChild("HumanoidRootPart") and mob.Humanoid.Health > 0 then
+                    if string.find(mob.Name, activeQuest.Mob) then
+                        local d = (mob.HumanoidRootPart.Position - hrp.Position).Magnitude
+                        if d < shortestDist then
+                            shortestDist = d
+                            targetMob = mob
+                        end
+                    end
+                end
+            end
+        end
+
+        if targetMob then
+            -- Bay tới đầu quái và đánh
+            local mobCF = targetMob.HumanoidRootPart.CFrame * CFrame.new(0, 10, 0)
+            hrp.CFrame = mobCF
+            
+            -- Gửi lệnh tấn công giả lập
+            pcall(function()
+                game:GetService("VirtualUser"):CaptureController()
+                game:GetService("VirtualUser"):Button1Down(Vector2.new(1280, 672))
+            end)
+        else
+            -- Nếu chưa thấy quái, bay về bãi quái mặc định trong config.json hoặc chờ
+            UpdateState("GET_QUEST")
+        end
     end
 }
 
--- 4. Vòng lặp điều phối
+-- 5. Vòng lặp điều phối trung tâm
 task.spawn(function()
-    while true do
-        if FSM.Running then
-            local baseState = string.split(FSM.State, ":")[1]
-            local action = Actions[baseState] or Actions[FSM.State]
-            if action then pcall(action) end
+    while FSM.Running do
+        local baseState = string.split(FSM.State, ":")[1]
+        local action = Actions[baseState] or Actions[FSM.State]
+        if action then 
+            pcall(action) 
         end
         task.wait(0.2)
     end
