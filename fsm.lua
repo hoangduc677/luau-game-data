@@ -1,4 +1,4 @@
--- Tệp: fsm.lua (Đã kích hoạt vòng lặp tự động cày cuốc)
+-- Tệp: fsm.lua (Bản ép buộc chạy trực tiếp)
 local HttpService = game:GetService("HttpService")
 local TweenService = game:GetService("TweenService")
 local Players = game:GetService("Players")
@@ -9,7 +9,7 @@ local QUESTS_URL = "https://raw.githubusercontent.com/hoangduc677/luau-game-data
 local UI_URL = "https://raw.githubusercontent.com/hoangduc677/luau-game-data/main/ui.lua?t=" .. tostring(os.time())
 
 local FSM = {
-    State = "IDLE",
+    State = "GET_QUEST", -- Ép thẳng vào trạng thái nhận quest để test xem có bay không!
     Running = true,
     ActiveTween = nil
 }
@@ -18,16 +18,18 @@ local FSM = {
 local okUI, UIModule = pcall(function() return loadstring(game:HttpGet(UI_URL))() end)
 local Dashboard = nil
 if okUI and UIModule then
-    Dashboard = UIModule.CreateDashboard("⚡ KAITUN BLOX FRUITS", function(isRunning)
+    Dashboard = UIModule.CreateDashboard("⚡ KAITUN DEBUG", function(isRunning)
         FSM.Running = isRunning
-        if not isRunning and FSM.ActiveTween then
-            FSM.ActiveTween:Cancel()
-            FSM.ActiveTween = nil
-        end
     end)
 end
 
--- 2. Tải Dữ liệu JSON từ GitHub
+local function UpdateState(newState)
+    FSM.State = newState
+    if Dashboard then Dashboard.SetStatus(newState) end
+    print("[FSM DEBUG] Đang ở trạng thái:", newState)
+end
+
+-- 2. Tải Dữ liệu Quests phòng hờ
 local function LoadJSONData(url)
     local ok1, raw = pcall(function() return game:HttpGet(url) end)
     if not ok1 then return nil end
@@ -36,41 +38,30 @@ local function LoadJSONData(url)
     return data
 end
 
-local Config = LoadJSONData(CONFIG_URL)
 local QuestsData = LoadJSONData(QUESTS_URL)
 
-if not Config or not QuestsData then
-    warn("❌ Không thể tải file dữ liệu cấu hình từ GitHub!")
-    return
-end
-
-local function UpdateState(newState)
-    FSM.State = newState
-    if Dashboard then Dashboard.SetStatus(newState) end
-end
-
--- 3. Lấy Quest chuẩn theo Level
-local function GetCurrentQuest()
-    local level = 1
-    pcall(function() level = LocalPlayer.Data.Level.Value end)
-
-    local allQuests = {}
-    if QuestsData.Sea1 then for _, q in ipairs(QuestsData.Sea1) do table.insert(allQuests, q) end end
-    if QuestsData.Sea2 then for _, q in ipairs(QuestsData.Sea2) do table.insert(allQuests, q) end end
-    if QuestsData.Sea3 then for _, q in ipairs(QuestsData.Sea3) do table.insert(allQuests, q) end end
-
-    local bestQuest = allQuests[1]
-    for _, q in ipairs(allQuests) do
-        if level >= q.MinLv then bestQuest = q end
+-- 3. Hàm lấy Quest an toàn tuyệt đối (Không sợ lỗi dữ liệu)
+local function GetSafeQuest()
+    if not QuestsData or not QuestsData.Sea1 then
+        -- Trả về dữ liệu cứng phòng khi mạng lỗi
+        return {
+            QuestName = "BanditQuest1",
+            QuestLv = 1,
+            Mob = "Bandit",
+            NPCCFrame = CFrame.new(1059, 21, 1549)
+        }
     end
-
-    if bestQuest and bestQuest.NPC then
-        bestQuest.NPCCFrame = CFrame.new(bestQuest.NPC[1], bestQuest.NPC[2] + 5, bestQuest.NPC[3])
-    end
-    return bestQuest
+    
+    local q = QuestsData.Sea1[1]
+    return {
+        QuestName = q.QuestName,
+        QuestLv = q.QuestLv,
+        Mob = q.Mob,
+        NPCCFrame = CFrame.new(q.NPC[1], q.NPC[2] + 5, q.NPC[3])
+    }
 end
 
--- 4. Hàm Fly ổn định siêu mượt
+-- 4. Hàm Fly ổn định
 local function StableFlyTo(targetCFrame, onComplete)
     local char = LocalPlayer.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
@@ -82,162 +73,84 @@ local function StableFlyTo(targetCFrame, onComplete)
     end
 
     hrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
-    
     local dist = (hrp.Position - targetCFrame.Position).Magnitude
-    local flySpeed = 350
-    local duration = dist / flySpeed
+    local duration = dist / 350 -- Tốc độ bay 350
 
     local tweenInfo = TweenInfo.new(duration, Enum.EasingStyle.Linear)
     FSM.ActiveTween = TweenService:Create(hrp, tweenInfo, {CFrame = targetCFrame})
     
-    FSM.ActiveTween.Completed:Connect(function(playbackState)
-        if playbackState == Enum.PlaybackState.Completed then
-            if onComplete then onComplete() end
+    FSM.ActiveTween.Completed:Connect(function(state)
+        if state == Enum.PlaybackState.Completed and onComplete then
+            onComplete()
         end
         FSM.ActiveTween = nil
     end)
-
     FSM.ActiveTween:Play()
 end
 
--- 5. Hàm Nhặt Trái & Cất Kho
-local function CheckAndCollectFruit()
-    local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-    if not hrp then return false end
-
-    for _, obj in ipairs(workspace:GetChildren()) do
-        if obj:IsA("Tool") and obj:FindFirstChild("Handle") then
-            if string.find(obj.Name, "Fruit") then
-                local fruitPart = obj.Handle
-                StableFlyTo(fruitPart.CFrame + Vector3.new(0, 5, 0))
-                return true
-            end
-        end
-    end
-    return false
-end
-
-local function AutoStoreFruits()
-    pcall(function()
-        local backpack = LocalPlayer.Backpack
-        local character = LocalPlayer.Character
-        local CommF = game:GetService("ReplicatedStorage"):WaitForChild("Remotes"):WaitForChild("CommF_")
-
-        for _, item in ipairs(backpack:GetChildren()) do
-            if item:IsA("Tool") and string.find(item.Name, "Fruit") then
-                CommF:InvokeServer("StoreFruit", item.Name)
-            end
-        end
-        if character then
-            for _, item in ipairs(character:GetChildren()) do
-                if item:IsA("Tool") and string.find(item.Name, "Fruit") then
-                    CommF:InvokeServer("StoreFruit", item.Name)
-                end
-            end
-        end
-    end)
-end
-
--- 6. Trạng thái FSM (Đã kích hoạt logic tự động thực thi)
+-- 5. Hành vi FSM
 local Actions = {
-    IDLE = function()
-        local beli = 0
-        pcall(function() beli = LocalPlayer.Data.Beli.Value end)
-        if beli >= 50000 then
-            UpdateState("RANDOM_FRUIT")
-            return
-        end
-
-        local activeQuest = GetCurrentQuest()
-        if not activeQuest then
-            UpdateState("COMPLETED")
-            return
-        end
-        
-        -- Kích hoạt chuyển sang nhận quest ngay lập tức
-        UpdateState("GET_QUEST")
-    end,
-
     GET_QUEST = function()
-        local activeQuest = GetCurrentQuest()
+        local activeQuest = GetSafeQuest()
         local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
         if not hrp then return end
 
-        local dist = (hrp.Position - activeQuest.NPCCFrame.Position).Magnitude
-        if dist > 15 then
-            StableFlyTo(activeQuest.NPCCFrame, function()
-                pcall(function()
-                    local CommF = game:GetService("ReplicatedStorage"):WaitForChild("Remotes"):WaitForChild("CommF_")
-                    CommF:InvokeServer("StartQuest", activeQuest.QuestName, activeQuest.QuestLv)
-                end)
-            end)
-            task.wait(1)
-        else
+        UpdateState("MOVING_TO_NPC")
+        print("🚀 Đang bay tới NPC giao nhiệm vụ tại tọa độ:", tostring(activeQuest.NPCCFrame.Position))
+
+        StableFlyTo(activeQuest.NPCCFrame, function()
+            print("✅ Đã đến NPC! Đang gọi lệnh nhận nhiệm vụ...")
             pcall(function()
                 local CommF = game:GetService("ReplicatedStorage"):WaitForChild("Remotes"):WaitForChild("CommF_")
                 CommF:InvokeServer("StartQuest", activeQuest.QuestName, activeQuest.QuestLv)
             end)
-            task.wait(0.5)
+            task.wait(1)
             UpdateState("FIND_MOB")
-        end
+        end)
     end,
 
     FIND_MOB = function()
-        local activeQuest = GetCurrentQuest()
-        local targetMob = nil
-        local shortestDist = 99999
+        local activeQuest = GetSafeQuest()
+        UpdateState("FARMING: " .. activeQuest.Mob)
+        
         local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
         if not hrp then return end
 
+        local targetMob = nil
         if workspace:FindFirstChild("Enemies") then
             for _, mob in ipairs(workspace.Enemies:GetChildren()) do
                 if mob:FindFirstChild("Humanoid") and mob:FindFirstChild("HumanoidRootPart") and mob.Humanoid.Health > 0 then
                     if string.find(mob.Name, activeQuest.Mob) then
-                        local d = (mob.HumanoidRootPart.Position - hrp.Position).Magnitude
-                        if d < shortestDist then
-                            shortestDist = d
-                            targetMob = mob
-                        end
+                        targetMob = mob
+                        break
                     end
                 end
             end
         end
 
         if targetMob then
-            local mobCF = targetMob.HumanoidRootPart.CFrame * CFrame.new(0, 12, 0)
-            hrp.CFrame = mobCF
+            hrp.CFrame = targetMob.HumanoidRootPart.CFrame * CFrame.new(0, 12, 0)
             pcall(function()
                 game:GetService("VirtualUser"):CaptureController()
                 game:GetService("VirtualUser"):Button1Down(Vector2.new(1280, 672))
             end)
         else
+            print("⚠️ Chưa tìm thấy quái loại:", activeQuest.Mob, "- Đang bay lại NPC...")
             UpdateState("GET_QUEST")
         end
-    end,
-
-    RANDOM_FRUIT = function()
-        UpdateState("BUYING_FRUIT")
-        pcall(function()
-            local CommF = game:GetService("ReplicatedStorage"):WaitForChild("Remotes"):WaitForChild("CommF_")
-            CommF:InvokeServer("Cousin", "Buy")
-        end)
-        task.wait(2)
-        UpdateState("IDLE")
     end
 }
 
--- 7. Vòng lặp điều phối chính
+-- 6. Vòng lặp chính
 task.spawn(function()
     while FSM.Running do
-        pcall(AutoStoreFruits)
-        local hasFruit = CheckAndCollectFruit()
-
-        if not hasFruit then
-            local action = Actions[FSM.State]
-            if action then pcall(action) end
-        else
-            UpdateState("COLLECTING_FRUIT")
+        local action = Actions[FSM.State]
+        if action then
+            local success, err = pcall(action)
+            if not success then
+                warn("❌ Lỗi thực thi trạng thái:", err)
+            end
         end
-        task.wait(0.2)
+        task.wait(1)
     end
 end)
