@@ -1,0 +1,21 @@
+{
+  "Version": "1.0.0",
+  "Settings": {
+    "MoveSpeed": 150,
+    "SafeHeightOffset": 15
+  },
+  "Locations": [
+    {
+      "Id": "Zone_1",
+      "Name": "Starter Area",
+      "MinLevel": 1,
+      "Coords": [1059, 16, 1549]
+    },
+    {
+      "Id": "Zone_2",
+      "Name": "Jungle Area",
+      "MinLevel": 10,
+      "Coords": [-1598, 36, 153]
+    }
+  ]
+}
