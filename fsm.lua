@@ -1,4 +1,4 @@
--- Tệp: fsm.lua (Tối ưu hóa cơ chế Fly ổn định & Giao diện gọn gàng)
+-- Tệp: fsm.lua (Đã kích hoạt vòng lặp tự động cày cuốc)
 local HttpService = game:GetService("HttpService")
 local TweenService = game:GetService("TweenService")
 local Players = game:GetService("Players")
@@ -14,7 +14,7 @@ local FSM = {
     ActiveTween = nil
 }
 
--- 1. Nạp Giao Diện UI Gọn Gàng
+-- 1. Nạp Giao Diện UI
 local okUI, UIModule = pcall(function() return loadstring(game:HttpGet(UI_URL))() end)
 local Dashboard = nil
 if okUI and UIModule then
@@ -70,7 +70,7 @@ local function GetCurrentQuest()
     return bestQuest
 end
 
--- 4. Hàm Fly ổn định siêu mượt (Tự động khóa trọng lực & tạo Tween an toàn)
+-- 4. Hàm Fly ổn định siêu mượt
 local function StableFlyTo(targetCFrame, onComplete)
     local char = LocalPlayer.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
@@ -81,11 +81,10 @@ local function StableFlyTo(targetCFrame, onComplete)
         FSM.ActiveTween = nil
     end
 
-    -- Khóa chuyển động vật lý thông thường để tránh bị đẩy lệch hướng khi bay
     hrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
     
     local dist = (hrp.Position - targetCFrame.Position).Magnitude
-    local flySpeed = 350 -- Tốc độ bay ổn định (studs/s)
+    local flySpeed = 350
     local duration = dist / flySpeed
 
     local tweenInfo = TweenInfo.new(duration, Enum.EasingStyle.Linear)
@@ -139,7 +138,7 @@ local function AutoStoreFruits()
     end)
 end
 
--- 6. Trạng thái FSM
+-- 6. Trạng thái FSM (Đã kích hoạt logic tự động thực thi)
 local Actions = {
     IDLE = function()
         local beli = 0
@@ -154,7 +153,9 @@ local Actions = {
             UpdateState("COMPLETED")
             return
         end
-        UpdateState("GET_QUEST: " + activeQuest.Mob)
+        
+        -- Kích hoạt chuyển sang nhận quest ngay lập tức
+        UpdateState("GET_QUEST")
     end,
 
     GET_QUEST = function()
@@ -232,8 +233,7 @@ task.spawn(function()
         local hasFruit = CheckAndCollectFruit()
 
         if not hasFruit then
-            local baseState = string.split(FSM.State, ":")[1]
-            local action = Actions[baseState] or Actions[FSM.State]
+            local action = Actions[FSM.State]
             if action then pcall(action) end
         else
             UpdateState("COLLECTING_FRUIT")
