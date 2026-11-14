@@ -1,12 +1,29 @@
--- Tệp: fsm.lua (Quản lý lộ trình di chuyển tuần tự)
+-- Tệp: fsm.lua (Đã tích hợp giao diện ui.lua)
 local HttpService = game:GetService("HttpService")
 local TweenService = game:GetService("TweenService")
 local Players = game:GetService("Players")
 
 local LocalPlayer = Players.LocalPlayer
 local CONFIG_URL = "https://raw.githubusercontent.com/hoangduc677/luau-game-data/main/config.json?t=" .. tostring(os.time())
+local UI_URL = "https://raw.githubusercontent.com/hoangduc677/luau-game-data/main/ui.lua?t=" .. tostring(os.time())
 
--- 1. Hàm tải dữ liệu từ file config.json của bạn
+-- 1. Nạp Module Giao Diện từ GitHub của bạn
+local okUI, UIModule = pcall(function()
+    return loadstring(game:HttpGet(UI_URL))()
+end)
+
+local Dashboard = nil
+if okUI and UIModule then
+    -- Tạo bảng điều khiển với tiêu đề "HỆ THỐNG KAITUN FSM"
+    Dashboard = UIModule.CreateDashboard("⚡ HỆ THỐNG KAITUN FSM", function(isRunning)
+        -- Xử lý khi bấm nút Bật/Dừng trên UI
+        -- (Có thể gán biến FSM.Running = isRunning ở đây nếu muốn)
+    end)
+else
+    warn("⚠️ Không thể tải giao diện ui.lua, tiếp tục chạy chế độ ẩn.")
+end
+
+-- 2. Tải Dữ Liệu Tọa Độ
 local function LoadConfig()
     local ok1, raw = pcall(function() return game:HttpGet(CONFIG_URL) end)
     if not ok1 then return nil end
@@ -23,24 +40,32 @@ end
 local Config = LoadConfig()
 if not Config then return end
 
--- 2. Khởi tạo bộ não điều khiển trạng thái (FSM)
+-- 3. Khởi tạo FSM
 local FSM = {
-    State = "IDLE",     -- Trạng thái hiện tại
-    Index = 1,          -- Đang đi tới điểm thứ mấy (1 là Zone_1, 2 là Zone_2)
-    Tween = nil,        -- Lưu lệnh bay để không gọi trùng
+    State = "IDLE",
+    Index = 1,
+    Tween = nil,
     Running = true
 }
 
--- 3. Các hành động tương ứng với từng trạng thái
+-- Hàm cập nhật trạng thái ra màn hình giao diện
+local function UpdateState(newState)
+    FSM.State = newState
+    if Dashboard then
+        Dashboard.SetStatus(newState)
+    end
+    print("[FSM Status]:", newState)
+end
+
+-- 4. Hành vi các trạng thái
 local Actions = {
     IDLE = function()
         local target = Config.Locations[FSM.Index]
         if not target then
-            FSM.State = "DONE"
+            UpdateState("DONE")
             return
         end
-        print("🎯 Chuẩn bị đi tới:", target.Name)
-        FSM.State = "MOVING"
+        UpdateState("MOVING: " .. target.Name)
     end,
 
     MOVING = function()
@@ -51,7 +76,7 @@ local Actions = {
         local dist = (hrp.Position - target.CFrame.Position).Magnitude
         if dist <= 10 then
             if FSM.Tween then FSM.Tween:Cancel(); FSM.Tween = nil end
-            FSM.State = "WORK"
+            UpdateState("WORK")
             return
         end
 
@@ -64,23 +89,26 @@ local Actions = {
 
     WORK = function()
         local target = Config.Locations[FSM.Index]
-        print("⚡ Đã tới nơi:", target.Name, "- Đang xử lý (chờ 2 giây)...")
-        task.wait(2)
-        FSM.Index += 1      -- Chuyển sang điểm tiếp theo
-        FSM.State = "IDLE"  -- Quay lại trạng thái IDLE để kiểm tra điểm mới
+        task.wait(2) -- Giả lập thời gian làm việc tại chỗ
+        FSM.Index += 1
+        UpdateState("IDLE")
     end,
 
     DONE = function()
-        print("🏁 Hoàn thành toàn bộ lộ trình!")
+        UpdateState("COMPLETED")
         FSM.Running = false
     end
 }
 
--- 4. Vòng lặp trung tâm duy nhất
+-- 5. Vòng lặp điều phối
 task.spawn(function()
     while FSM.Running do
-        if Actions[FSM.State] then
-            pcall(Actions[FSM.State])
+        -- Xử lý chuỗi trạng thái bắt đầu bằng MOVING
+        local baseState = string.split(FSM.State, ":")[1]
+        local action = Actions[baseState] or Actions[FSM.State]
+        
+        if action then
+            pcall(action)
         end
         task.wait(0.2)
     end
