@@ -9,9 +9,55 @@ local QUESTS_URL = "https://raw.githubusercontent.com/hoangduc677/luau-game-data
 local UI_URL = "https://raw.githubusercontent.com/hoangduc677/luau-game-data/main/ui.lua?t=" .. tostring(os.time())
 
 local FSM = {
-    State = "GET_QUEST", -- Ép thẳng vào trạng thái nhận quest để test xem có bay không!
-    Running = true,
-    ActiveTween = nil
+    local Actions = {
+    GET_QUEST = function()
+        local activeQuest = GetSafeQuest()
+        local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+        if not hrp then return end
+
+        UpdateState("MOVING_TO_NPC")
+        print("🚀 Đang bay tới NPC giao nhiệm vụ...")
+
+        StableFlyTo(activeQuest.NPCCFrame, function()
+            print("✅ Đã đến NPC! Đang gọi lệnh nhận nhiệm vụ...")
+            pcall(function()
+                local CommF = game:GetService("ReplicatedStorage"):WaitForChild("Remotes"):WaitForChild("CommF_")
+                CommF:InvokeServer("StartQuest", activeQuest.QuestName, activeQuest.QuestLv)
+            end)
+            task.wait(1)
+            UpdateState("FIND_MOB")
+        end)
+    end,
+
+    FIND_MOB = function()
+        local activeQuest = GetSafeQuest()
+        UpdateState("FARMING: " .. activeQuest.Mob)
+        
+        local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+        if not hrp then return end
+
+        local targetMob = nil
+        if workspace:FindFirstChild("Enemies") then
+            for _, mob in ipairs(workspace.Enemies:GetChildren()) do
+                if mob:FindFirstChild("Humanoid") and mob:FindFirstChild("HumanoidRootPart") and mob.Humanoid.Health > 0 then
+                    if string.find(mob.Name, activeQuest.Mob) then
+                        targetMob = mob
+                        break
+                    end
+                end
+            end
+        end
+
+        if targetMob then
+            hrp.CFrame = targetMob.HumanoidRootPart.CFrame * CFrame.new(0, 12, 0)
+            pcall(function()
+                game:GetService("VirtualUser"):CaptureController()
+                game:GetService("VirtualUser"):Button1Down(Vector2.new(1280, 672))
+            end)
+        else
+            UpdateState("GET_QUEST")
+        end
+    end
 }
 
 -- 1. Nạp Giao Diện UI
