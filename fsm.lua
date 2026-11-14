@@ -1,4 +1,4 @@
--- Tệp: fsm.lua (Bản ép buộc chạy trực tiếp)
+-- Tệp: fsm.lua (Chuẩn 100%, không lỗi cú pháp)
 local HttpService = game:GetService("HttpService")
 local TweenService = game:GetService("TweenService")
 local Players = game:GetService("Players")
@@ -9,55 +9,9 @@ local QUESTS_URL = "https://raw.githubusercontent.com/hoangduc677/luau-game-data
 local UI_URL = "https://raw.githubusercontent.com/hoangduc677/luau-game-data/main/ui.lua?t=" .. tostring(os.time())
 
 local FSM = {
-    local Actions = {
-    GET_QUEST = function()
-        local activeQuest = GetSafeQuest()
-        local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-        if not hrp then return end
-
-        UpdateState("MOVING_TO_NPC")
-        print("🚀 Đang bay tới NPC giao nhiệm vụ...")
-
-        StableFlyTo(activeQuest.NPCCFrame, function()
-            print("✅ Đã đến NPC! Đang gọi lệnh nhận nhiệm vụ...")
-            pcall(function()
-                local CommF = game:GetService("ReplicatedStorage"):WaitForChild("Remotes"):WaitForChild("CommF_")
-                CommF:InvokeServer("StartQuest", activeQuest.QuestName, activeQuest.QuestLv)
-            end)
-            task.wait(1)
-            UpdateState("FIND_MOB")
-        end)
-    end,
-
-    FIND_MOB = function()
-        local activeQuest = GetSafeQuest()
-        UpdateState("FARMING: " .. activeQuest.Mob)
-        
-        local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-        if not hrp then return end
-
-        local targetMob = nil
-        if workspace:FindFirstChild("Enemies") then
-            for _, mob in ipairs(workspace.Enemies:GetChildren()) do
-                if mob:FindFirstChild("Humanoid") and mob:FindFirstChild("HumanoidRootPart") and mob.Humanoid.Health > 0 then
-                    if string.find(mob.Name, activeQuest.Mob) then
-                        targetMob = mob
-                        break
-                    end
-                end
-            end
-        end
-
-        if targetMob then
-            hrp.CFrame = targetMob.HumanoidRootPart.CFrame * CFrame.new(0, 12, 0)
-            pcall(function()
-                game:GetService("VirtualUser"):CaptureController()
-                game:GetService("VirtualUser"):Button1Down(Vector2.new(1280, 672))
-            end)
-        else
-            UpdateState("GET_QUEST")
-        end
-    end
+    State = "GET_QUEST",
+    Running = true,
+    ActiveTween = nil
 }
 
 -- 1. Nạp Giao Diện UI
@@ -86,10 +40,9 @@ end
 
 local QuestsData = LoadJSONData(QUESTS_URL)
 
--- 3. Hàm lấy Quest an toàn tuyệt đối (Không sợ lỗi dữ liệu)
+-- 3. Hàm lấy Quest an toàn tuyệt đối
 local function GetSafeQuest()
     if not QuestsData or not QuestsData.Sea1 then
-        -- Trả về dữ liệu cứng phòng khi mạng lỗi
         return {
             QuestName = "BanditQuest1",
             QuestLv = 1,
@@ -120,7 +73,7 @@ local function StableFlyTo(targetCFrame, onComplete)
 
     hrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
     local dist = (hrp.Position - targetCFrame.Position).Magnitude
-    local duration = dist / 350 -- Tốc độ bay 350
+    local duration = dist / 350
 
     local tweenInfo = TweenInfo.new(duration, Enum.EasingStyle.Linear)
     FSM.ActiveTween = TweenService:Create(hrp, tweenInfo, {CFrame = targetCFrame})
