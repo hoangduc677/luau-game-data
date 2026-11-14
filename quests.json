@@ -1,0 +1,15 @@
+{
+  "Sea1": [
+    { "MinLv": 0, "QuestName": "BanditQuest1", "QuestLv": 1, "Mob": "Bandit", "NPC": [1059, 16, 1549] },
+    { "MinLv": 10, "QuestName": "JungleQuest", "QuestLv": 1, "Mob": "Monkey", "NPC": [-1598, 36, 153] },
+    { "MinLv": 15, "QuestName": "JungleQuest", "QuestLv": 2, "Mob": "Gorilla", "NPC": [-1598, 36, 153] }
+  ],
+  "Sea2": [
+    { "MinLv": 700, "QuestName": "Area1Quest", "QuestLv": 1, "Mob": "Raider", "NPC": [-424, 72, 1838] },
+    { "MinLv": 725, "QuestName": "Area1Quest", "QuestLv": 2, "Mob": "Mercenary", "NPC": [-424, 72, 1838] }
+  ],
+  "Sea3": [
+    { "MinLv": 1500, "QuestName": "PiratePortQuest", "QuestLv": 1, "Mob": "Pirate Millionaire", "NPC": [-290, 43, 5581] },
+    { "MinLv": 1525, "QuestName": "PiratePortQuest", "QuestLv": 2, "Mob": "Pistol Billionaire", "NPC": [-290, 43, 5581] }
+  ]
+}
