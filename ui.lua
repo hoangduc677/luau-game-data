@@ -1,8 +1,8 @@
--- Tệp: ui.lua (Module Giao diện dùng chung)
+-- Tệp: ui.lua (Phiên bản nâng cấp có chỉnh tốc độ)
 local CoreGui = game:GetService("CoreGui")
 local UI = {}
 
-function UI.CreateDashboard(titleText, onToggleCallback)
+function UI.CreateDashboard(titleText, onToggleCallback, onSpeedChangeCallback)
     local parent = (gethui and gethui()) or CoreGui
     if parent:FindFirstChild("MeowModularUI") then
         parent.MeowModularUI:Destroy()
@@ -13,7 +13,7 @@ function UI.CreateDashboard(titleText, onToggleCallback)
     gui.ResetOnSpawn = false
 
     local main = Instance.new("Frame", gui)
-    main.Size = UDim2.new(0, 240, 0, 115)
+    main.Size = UDim2.new(0, 240, 0, 155) -- Mở rộng chiều cao để chứa nút tốc độ
     main.Position = UDim2.new(0.5, -120, 0.12, 0)
     main.BackgroundColor3 = Color3.fromRGB(20, 22, 28)
     main.Active = true
@@ -34,32 +34,54 @@ function UI.CreateDashboard(titleText, onToggleCallback)
 
     local status = Instance.new("TextLabel", main)
     status.Size = UDim2.new(0.9, 0, 0, 24)
-    status.Position = UDim2.new(0.05, 0, 0, 32)
+    status.Position = UDim2.new(0.05, 0, 0, 28)
     status.BackgroundTransparency = 1
     status.Text = "State: IDLE"
     status.TextColor3 = Color3.fromRGB(220, 220, 230)
     status.Font = Enum.Font.GothamMedium
     status.TextSize = 11
 
-    local btn = Instance.new("TextButton", main)
-    btn.Size = UDim2.new(0.9, 0, 0, 34)
-    btn.Position = UDim2.new(0.05, 0, 0, 66)
-    btn.BackgroundColor3 = Color3.fromRGB(45, 165, 95)
-    btn.Text = "ĐANG CHẠY (Bấm để dừng)"
-    btn.TextColor3 = Color3.new(1, 1, 1)
-    btn.Font = Enum.Font.GothamBold
-    btn.TextSize = 11
-    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 6)
+    -- Nút Bật / Dừng
+    local toggleBtn = Instance.new("TextButton", main)
+    toggleBtn.Size = UDim2.new(0.9, 0, 0, 32)
+    toggleBtn.Position = UDim2.new(0.05, 0, 0, 56)
+    toggleBtn.BackgroundColor3 = Color3.fromRGB(45, 165, 95)
+    toggleBtn.Text = "ĐANG CHẠY (Bấm để dừng)"
+    toggleBtn.TextColor3 = Color3.new(1, 1, 1)
+    toggleBtn.Font = Enum.Font.GothamBold
+    toggleBtn.TextSize = 11
+    Instance.new("UICorner", toggleBtn).CornerRadius = UDim.new(0, 6)
 
     local isRunning = true
-    btn.MouseButton1Click:Connect(function()
+    toggleBtn.MouseButton1Click:Connect(function()
         isRunning = not isRunning
-        btn.Text = isRunning and "ĐANG CHẠY (Bấm để dừng)" or "ĐÃ TẠM DỪNG (Bấm để chạy)"
-        btn.BackgroundColor3 = isRunning and Color3.fromRGB(45, 165, 95) or Color3.fromRGB(185, 60, 60)
+        toggleBtn.Text = isRunning and "ĐANG CHẠY (Bấm để dừng)" or "ĐÃ DỪNG (Bấm để chạy)"
+        toggleBtn.BackgroundColor3 = isRunning and Color3.fromRGB(45, 165, 95) or Color3.fromRGB(185, 60, 60)
         if onToggleCallback then onToggleCallback(isRunning) end
     end)
 
-    -- Trả về bảng chứa hàm cập nhật chữ trạng thái cho FSM gọi
+    -- Nút đổi Tốc độ bay (150 -> 300 -> 450)
+    local speedBtn = Instance.new("TextButton", main)
+    speedBtn.Size = UDim2.new(0.9, 0, 0, 32)
+    speedBtn.Position = UDim2.new(0.05, 0, 0, 94)
+    speedBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 80)
+    speedBtn.Text = "Tốc độ bay: 150"
+    speedBtn.TextColor3 = Color3.new(1, 1, 1)
+    speedBtn.Font = Enum.Font.GothamSemibold
+    speedBtn.TextSize = 11
+    Instance.new("UICorner", speedBtn).CornerRadius = UDim.new(0, 6)
+
+    local speeds = {150, 300, 450}
+    local speedIndex = 1
+    speedBtn.MouseButton1Click:Connect(function()
+        speedIndex = speedIndex + 1
+        if speedIndex > #speeds then speedIndex = 1 end
+        local currentSpeed = speeds[speedIndex]
+        
+        speedBtn.Text = "Tốc độ bay: " .. tostring(currentSpeed)
+        if onSpeedChangeCallback then onSpeedChangeCallback(currentSpeed) end
+    end)
+
     return {
         SetStatus = function(text)
             status.Text = "State: " .. tostring(text)
