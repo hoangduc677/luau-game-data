@@ -1,8 +1,8 @@
--- Tệp: ui.lua (Phiên bản nâng cấp có chỉnh tốc độ)
+-- Tệp: ui.lua (Giao diện tinh gọn)
 local CoreGui = game:GetService("CoreGui")
 local UI = {}
 
-function UI.CreateDashboard(titleText, onToggleCallback, onSpeedChangeCallback)
+function UI.CreateDashboard(titleText, onToggleCallback)
     local parent = (gethui and gethui()) or CoreGui
     if parent:FindFirstChild("MeowModularUI") then
         parent.MeowModularUI:Destroy()
@@ -13,7 +13,7 @@ function UI.CreateDashboard(titleText, onToggleCallback, onSpeedChangeCallback)
     gui.ResetOnSpawn = false
 
     local main = Instance.new("Frame", gui)
-    main.Size = UDim2.new(0, 240, 0, 155) -- Mở rộng chiều cao để chứa nút tốc độ
+    main.Size = UDim2.new(0, 240, 0, 115) -- Thu gọn chiều cao vì đã bỏ nút tốc độ
     main.Position = UDim2.new(0.5, -120, 0.12, 0)
     main.BackgroundColor3 = Color3.fromRGB(20, 22, 28)
     main.Active = true
@@ -27,7 +27,7 @@ function UI.CreateDashboard(titleText, onToggleCallback, onSpeedChangeCallback)
     local title = Instance.new("TextLabel", main)
     title.Size = UDim2.new(1, 0, 0, 28)
     title.BackgroundTransparency = 1
-    title.Text = titleText or "CONTROL PANEL"
+    title.Text = titleText or "KAITUN PANEL"
     title.TextColor3 = Color3.fromRGB(100, 170, 255)
     title.Font = Enum.Font.GothamBold
     title.TextSize = 12
@@ -41,10 +41,9 @@ function UI.CreateDashboard(titleText, onToggleCallback, onSpeedChangeCallback)
     status.Font = Enum.Font.GothamMedium
     status.TextSize = 11
 
-    -- Nút Bật / Dừng
     local toggleBtn = Instance.new("TextButton", main)
-    toggleBtn.Size = UDim2.new(0.9, 0, 0, 32)
-    toggleBtn.Position = UDim2.new(0.05, 0, 0, 56)
+    toggleBtn.Size = UDim2.new(0.9, 0, 0, 36)
+    toggleBtn.Position = UDim2.new(0.05, 0, 0, 62)
     toggleBtn.BackgroundColor3 = Color3.fromRGB(45, 165, 95)
     toggleBtn.Text = "ĐANG CHẠY (Bấm để dừng)"
     toggleBtn.TextColor3 = Color3.new(1, 1, 1)
@@ -60,31 +59,9 @@ function UI.CreateDashboard(titleText, onToggleCallback, onSpeedChangeCallback)
         if onToggleCallback then onToggleCallback(isRunning) end
     end)
 
-    -- Nút đổi Tốc độ bay (150 -> 300 -> 450)
-    local speedBtn = Instance.new("TextButton", main)
-    speedBtn.Size = UDim2.new(0.9, 0, 0, 32)
-    speedBtn.Position = UDim2.new(0.05, 0, 0, 94)
-    speedBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 80)
-    speedBtn.Text = "Tốc độ bay: 150"
-    speedBtn.TextColor3 = Color3.new(1, 1, 1)
-    speedBtn.Font = Enum.Font.GothamSemibold
-    speedBtn.TextSize = 11
-    Instance.new("UICorner", speedBtn).CornerRadius = UDim.new(0, 6)
-
-    local speeds = {150, 300, 450}
-    local speedIndex = 1
-    speedBtn.MouseButton1Click:Connect(function()
-        speedIndex = speedIndex + 1
-        if speedIndex > #speeds then speedIndex = 1 end
-        local currentSpeed = speeds[speedIndex]
-        
-        speedBtn.Text = "Tốc độ bay: " .. tostring(currentSpeed)
-        if onSpeedChangeCallback then onSpeedChangeCallback(currentSpeed) end
-    end)
-
     return {
         SetStatus = function(text)
-            status.Text = "State: " .. tostring(text)
+            status.Text = "State: " + tostring(text) -- sửa lại cho an toàn hoặc text concat thông thường
         end
     }
 end
