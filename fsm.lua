@@ -1,4 +1,4 @@
--- Tệp: fsm.lua (Thêm logic kiểm tra Level và chọn Quest tự động)
+-- Tệp: fsm.lua (Hệ thống Kaitun Hoàn chỉnh: Quest động + Random Trái + Nhặt/Cất Kho Trái)
 local HttpService = game:GetService("HttpService")
 local TweenService = game:GetService("TweenService")
 local Players = game:GetService("Players")
@@ -14,17 +14,17 @@ local FSM = {
     Running = true
 }
 
--- 1. Nạp UI điều khiển
+-- 1. Nạp Giao Diện UI
 local okUI, UIModule = pcall(function() return loadstring(game:HttpGet(UI_URL))() end)
 local Dashboard = nil
 if okUI and UIModule then
-    Dashboard = UIModule.CreateDashboard("⚡ KAITUN AUTO QUEST", 
+    Dashboard = UIModule.CreateDashboard("⚡ KAITUN BLOX FRUITS", 
         function(isRunning) FSM.Running = isRunning end,
         function(newSpeed) getgenv().DynamicSpeed = newSpeed end
     )
 end
 
--- 2. Tải dữ liệu Tọa độ chung và Nhiệm vụ từ GitHub
+-- 2. Tải Dữ liệu từ GitHub
 local function LoadJSONData(url)
     local ok1, raw = pcall(function() return game:HttpGet(url) end)
     if not ok1 then return nil end
@@ -37,38 +37,8 @@ local Config = LoadJSONData(CONFIG_URL)
 local QuestsData = LoadJSONData(QUESTS_URL)
 
 if not Config or not QuestsData then
-    warn("❌ Không thể tải file dữ liệu từ GitHub!")
+    warn("❌ Không thể tải file dữ liệu cấu hình từ GitHub!")
     return
-end
-
--- 3. Hàm tự động quét Level hiện tại để chọn Quest chuẩn xác
-local function GetCurrentQuest()
-    -- Lấy level của người chơi (Mặc định trả về 1 nếu chưa load dữ liệu game)
-    local level = 1
-    pcall(function()
-        level = LocalPlayer.Data.Level.Value
-    end)
-
-    -- Xác định Sea dựa trên Level hoặc gộp toàn bộ danh sách để quét
-    local allQuests = {}
-    if QuestsData.Sea1 then for _, q in ipairs(QuestsData.Sea1) do table.insert(allQuests, q) end end
-    if QuestsData.Sea2 then for _, q in ipairs(QuestsData.Sea2) do table.insert(allQuests, q) end end
-    if QuestsData.Sea3 then for _, q in ipairs(QuestsData.Sea3) do table.insert(allQuests, q) end end
-
-    -- Tìm nhiệm vụ phù hợp với level cao nhất mà nhân vật đạt được
-    local bestQuest = allQuests[1]
-    for _, q in ipairs(allQuests) do
-        if level >= q.MinLv then
-            bestQuest = q
-        end
-    end
-
-    -- Chuyển đổi tọa độ NPC từ mảng [X, Y, Z] sang CFrame
-    if bestQuest and bestQuest.NPC then
-        bestQuest.NPCCFrame = CFrame.new(bestQuest.NPC[1], bestQuest.NPC[2], bestQuest.NPC[3])
-    end
-
-    return bestQuest
 end
 
 local function UpdateState(newState)
@@ -76,15 +46,87 @@ local function UpdateState(newState)
     if Dashboard then Dashboard.SetStatus(newState) end
 end
 
--- 4. FSM Logic cập nhật theo nhiệm vụ động
+-- 3. Hàm lấy Quest chuẩn theo Level nhân vật
+local function GetCurrentQuest()
+    local level = 1
+    pcall(function() level = LocalPlayer.Data.Level.Value end)
+
+    local allQuests = {}
+    if QuestsData.Sea1 then for _, q in ipairs(QuestsData.Sea1) do table.insert(allQuests, q) end end
+    if QuestsData.Sea2 then for _, q in ipairs(QuestsData.Sea2) do table.insert(allQuests, q) end end
+    if QuestsData.Sea3 then for _, q in ipairs(QuestsData.Sea3) do table.insert(allQuests, q) end end
+
+    local bestQuest = allQuests[1]
+    for _, q in ipairs(allQuests) do
+        if level >= q.MinLv then bestQuest = q end
+    end
+
+    if bestQuest and bestQuest.NPC then
+        bestQuest.NPCCFrame = CFrame.new(bestQuest.NPC[1], bestQuest.NPC[2], bestQuest.NPC[3])
+    end
+    return bestQuest
+end
+
+-- 4. Hàm tự động Nhặt Trái Ác Quỷ rơi dưới đất
+local function CheckAndCollectFruit()
+    local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    if not hrp then return false end
+
+    for _, obj in ipairs(workspace:GetChildren()) do
+        if obj:IsA("Tool") and obj:FindFirstChild("Handle") then
+            if string.find(obj.Name, "Fruit") then
+                local fruitPart = obj.Handle
+                local dist = (hrp.Position - fruitPart.Position).Magnitude
+                print("🍎 Phát hiện trái cây rơi:", obj.Name, "| Khoảng cách:", math.floor(dist))
+                hrp.CFrame = fruitPart.CFrame
+                task.wait(0.4)
+                return true
+            end
+        end
+    end
+    return false
+end
+
+-- 5. Hàm tự động Cất Kho Trái Ác Quỷ (Store Fruit)
+local function AutoStoreFruits()
+    pcall(function()
+        local backpack = LocalPlayer.Backpack
+        local character = LocalPlayer.Character
+        local CommF = game:GetService("ReplicatedStorage"):WaitForChild("Remotes"):WaitForChild("CommF_")
+
+        for _, item in ipairs(backpack:GetChildren()) do
+            if item:IsA("Tool") and string.find(item.Name, "Fruit") then
+                print("📦 Đang cất trái vào kho:", item.Name)
+                CommF:InvokeServer("StoreFruit", item.Name)
+            end
+        end
+        if character then
+            for _, item in ipairs(character:GetChildren()) do
+                if item:IsA("Tool") and string.find(item.Name, "Fruit") then
+                    print("📦 Đang cất trái trên tay vào kho:", item.Name)
+                    CommF:InvokeServer("StoreFruit", item.Name)
+                end
+            end
+        end
+    end)
+end
+
+-- 6. Định nghĩa các trạng thái FSM
 local Actions = {
     IDLE = function()
+        -- Kiểm tra tiền Beli để định kỳ random trái (ví dụ đủ 50k Beli)
+        local beli = 0
+        pcall(function() beli = LocalPlayer.Data.Beli.Value end)
+        if beli >= 50000 then
+            UpdateState("RANDOM_FRUIT")
+            return
+        end
+
         local activeQuest = GetCurrentQuest()
         if not activeQuest then
             UpdateState("COMPLETED")
             return
         end
-        print("📜 Đang làm nhiệm vụ đánh quái:", activeQuest.Mob, "| Level yêu cầu:", activeQuest.MinLv)
         UpdateState("GET_QUEST: " .. activeQuest.Mob)
     end,
 
@@ -93,28 +135,20 @@ local Actions = {
         local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
         if not hrp then return end
 
-        -- Bay tới NPC nhận nhiệm vụ
         local dist = (hrp.Position - activeQuest.NPCCFrame.Position).Magnitude
         if dist > 15 then
             local speed = getgenv().DynamicSpeed
-            -- Tween tới NPC
             local tween = TweenService:Create(hrp, TweenInfo.new(dist / speed, Enum.EasingStyle.Linear), {CFrame = activeQuest.NPCCFrame})
             tween:Play()
             task.wait(dist / speed)
         else
-            -- Đã tới gần NPC -> Gọi Remote nhận nhiệm vụ
             pcall(function()
                 local CommF = game:GetService("ReplicatedStorage"):WaitForChild("Remotes"):WaitForChild("CommF_")
                 CommF:InvokeServer("StartQuest", activeQuest.QuestName, activeQuest.QuestLv)
             end)
             task.wait(1)
-            UpdateState("FARMING")
+            UpdateState("FIND_MOB")
         end
-    end,
-
-    FARMING = function()
-        -- Trạng thái này sẽ tìm quái dựa theo activeQuest.Mob ở bước sau
-        UpdateState("FIND_MOB")
     end,
 
     FIND_MOB = function()
@@ -122,10 +156,8 @@ local Actions = {
         local targetMob = nil
         local shortestDist = 99999
         local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-
         if not hrp then return end
 
-        -- Quét thư mục Enemies trong workspace để tìm đúng loại quái nhiệm vụ
         if workspace:FindFirstChild("Enemies") then
             for _, mob in ipairs(workspace.Enemies:GetChildren()) do
                 if mob:FindFirstChild("Humanoid") and mob:FindFirstChild("HumanoidRootPart") and mob.Humanoid.Health > 0 then
@@ -141,30 +173,42 @@ local Actions = {
         end
 
         if targetMob then
-            -- Bay tới đầu quái và đánh
             local mobCF = targetMob.HumanoidRootPart.CFrame * CFrame.new(0, 10, 0)
             hrp.CFrame = mobCF
-            
-            -- Gửi lệnh tấn công giả lập
             pcall(function()
                 game:GetService("VirtualUser"):CaptureController()
                 game:GetService("VirtualUser"):Button1Down(Vector2.new(1280, 672))
             end)
         else
-            -- Nếu chưa thấy quái, bay về bãi quái mặc định trong config.json hoặc chờ
             UpdateState("GET_QUEST")
         end
+    end,
+
+    RANDOM_FRUIT = function()
+        UpdateState("BUYING_FRUIT")
+        pcall(function()
+            local CommF = game:GetService("ReplicatedStorage"):WaitForChild("Remotes"):WaitForChild("CommF_")
+            local res = CommF:InvokeServer("Cousin", "Buy")
+            print("🎲 Kết quả Random Trái:", tostring(res))
+        end)
+        task.wait(2)
+        UpdateState("IDLE")
     end
 }
 
--- 5. Vòng lặp điều phối trung tâm
+-- 7. Vòng lặp điều phối chính (Ưu tiên nhặt trái & cất kho tuyệt đối)
 task.spawn(function()
     while FSM.Running do
-        local baseState = string.split(FSM.State, ":")[1]
-        local action = Actions[baseState] or Actions[FSM.State]
-        if action then 
-            pcall(action) 
+        pcall(AutoStoreFruits)
+        local hasFruit = CheckAndCollectFruit()
+
+        if hasFruit then
+            UpdateState("COLLECTING_FRUIT")
+        else
+            local baseState = string.split(FSM.State, ":")[1]
+            local action = Actions[baseState] or Actions[FSM.State]
+            if action then pcall(action) end
         end
-        task.wait(0.2)
+        task.wait(0.25)
     end
 end)
