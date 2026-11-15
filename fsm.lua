@@ -1,16 +1,29 @@
--- fsm.lua — Finite State Machine cho Kaitun Blox Fruits
+-- fsm.lua — Đã tối ưu cho Mobile (Teleport xa, Notification)
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
 local HttpService = game:GetService("HttpService")
 local VirtualUser = game:GetService("VirtualUser")
+local StarterGui = game:GetService("StarterGui")
 
 local LocalPlayer = Players.LocalPlayer
 local BASE_URL = "https://raw.githubusercontent.com/hoangduc677/luau-game-data/main/"
 
+-- ================= THÔNG BÁO (Dành cho Mobile) =================
+local function notify(msg)
+    print("[FSM]", msg)
+    pcall(function()
+        StarterGui:SetCore("SendNotification", {
+            Title = "Kaitun",
+            Text = tostring(msg),
+            Duration = 3,
+        })
+    end)
+end
+
 -- ================= CONFIG =================
 local CONFIG = {
-    FlySpeed = 150, QuestCheckDelay = 0.5, QuestRetryMax = 3,
+    FlySpeed = 150, QuestCheckDelay = 1.5, QuestRetryMax = 3,
     FarmRetryDelay = 1.5, FarmTimeoutSec = 60, MobOffsetY = 5,
     MobRadius = 60, QuestCacheTTL = 10, WeaponType = "Melee",
     AutoStoreFruit = true, AutoRandomFruit = true, MinBeliToRandom = 500000,
@@ -56,21 +69,35 @@ local function setCanCollide(v)
     end
 end
 
+-- 🔥 HÀM BAY ĐÃ ĐƯỢC FIX (Teleport cho khoảng cách xa)
 local function flyTo(targetCFrame)
     stopActiveTween()
     if not isRunning then return end
     local char, hrp = getCharacter()
     if not hrp then return end
-    hrp.AssemblyLinearVelocity = Vector3.zero
+    
     local dist = (targetCFrame.Position - hrp.Position).Magnitude
-    if dist < 1 then return end
+    if dist < 2 then return end
+    
     setCanCollide(false)
-    ActiveTween = TweenService:Create(hrp,
-        TweenInfo.new(dist / CONFIG.FlySpeed, Enum.EasingStyle.Linear),
-        { CFrame = targetCFrame })
-    ActiveTween:Play()
-    ActiveTween.Completed:Wait()
-    ActiveTween = nil
+    hrp.AssemblyLinearVelocity = Vector3.zero
+    
+    if dist > 1000 then
+        -- Nếu xa hơn 1000 studs (qua biển) -> Teleport thẳng để tránh rớt/văng
+        hrp.CFrame = targetCFrame
+        task.wait(0.5) -- Chờ map load
+    else
+        -- Nếu gần -> Bay từ từ bằng Tween
+        ActiveTween = TweenService:Create(hrp,
+            TweenInfo.new(dist / CONFIG.FlySpeed, Enum.EasingStyle.Linear),
+            { CFrame = targetCFrame })
+        ActiveTween:Play()
+        ActiveTween.Completed:Wait()
+        ActiveTween = nil
+    end
+    
+    -- Chờ 0.3s trước khi bật lại CanCollide để tránh bị văng (fling)
+    task.wait(0.3)
     setCanCollide(true)
 end
 
@@ -107,7 +134,6 @@ local function LoadQuests(forceRefresh)
     if not ok or type(raw) ~= "string" or #raw == 0 then return _questsCache or {} end
     local ok2, d = pcall(HttpService.JSONDecode, HttpService, raw)
     if ok2 and type(d) == "table" then
-        -- ✅ FIX: quests.json có wrapper "Sea1"
         local list = d.Sea1 or d
         if type(list) == "table" and #list > 0 then
             _questsCache = list
@@ -196,7 +222,7 @@ local function AttackMob(targetRoot)
     end
 end
 
--- ================= ANTI-AFK =================
+-- ================= BACKGROUND =================
 LocalPlayer.Idled:Connect(function()
     pcall(function()
         VirtualUser:CaptureController()
@@ -204,12 +230,9 @@ LocalPlayer.Idled:Connect(function()
     end)
 end)
 
--- ================= BACKGROUND =================
 task.spawn(function()
     task.wait(2)
-    pcall(function()
-        ReplicatedStorage.Remotes.CommF_:InvokeServer("SetTeam", "Pirates")
-    end)
+    pcall(function() ReplicatedStorage.Remotes.CommF_:InvokeServer("SetTeam", "Pirates") end)
 end)
 
 task.spawn(function()
@@ -220,48 +243,12 @@ task.spawn(function()
                 if pts and pts > 0 then
                     local melee = math.floor(pts * 0.7)
                     local def = pts - melee
-                    if melee > 0 then
-                        ReplicatedStorage.Remotes.CommF_:InvokeServer("AddPoint", "Melee", melee)
-                    end
-                    if def > 0 then
-                        ReplicatedStorage.Remotes.CommF_:InvokeServer("AddPoint", "Defense", def)
-                    end
+                    if melee > 0 then ReplicatedStorage.Remotes.CommF_:InvokeServer("AddPoint", "Melee", melee) end
+                    if def > 0 then ReplicatedStorage.Remotes.CommF_:InvokeServer("AddPoint", "Defense", def) end
                 end
             end)
         end
         task.wait(10)
-    end
-end)
-
-task.spawn(function()
-    while true do
-        if isRunning then
-            pcall(function()
-                local C = ReplicatedStorage.Remotes.CommF_
-                C:InvokeServer("BuyHaki", "Buso")
-                local beli = GetPlayerBeli()
-                if beli >= 100000 then C:InvokeServer("BuyHaki", "Geppo") end
-                if beli >= 150000 then C:InvokeServer("BuyHaki", "Soru") end
-            end)
-        end
-        task.wait(30)
-    end
-end)
-
-task.spawn(function()
-    while true do
-        if isRunning and CONFIG.AutoStoreFruit then
-            pcall(function()
-                local char = LocalPlayer.Character
-                if not char then return end
-                for _, tool in ipairs(char:GetChildren()) do
-                    if tool:IsA("Tool") and getToolType(tool) == "Blox Fruit" then
-                        ReplicatedStorage.Remotes.CommF_:InvokeServer("StoreFruit", tool.Name)
-                    end
-                end
-            end)
-        end
-        task.wait(5)
     end
 end)
 
@@ -285,13 +272,11 @@ local function stateGetQuest()
     local lv = GetPlayerLevel()
     local q = PickQuest(lv)
     if not q then
-        warn("[FSM] Không tìm được quest cho level", lv)
-        task.wait(2)
-        setState("IDLE")
-        return
+        task.wait(2); setState("IDLE"); return
     end
     currentQuest = q
 
+    notify("Đang tới NPC: " .. q.QuestName)
     local npc = Vector3.new(q.NPC[1], q.NPC[2], q.NPC[3])
     flyTo(CFrame.new(npc))
     if not isRunning then setState("IDLE"); return end
@@ -300,20 +285,20 @@ local function stateGetQuest()
         ReplicatedStorage.Remotes.CommF_:InvokeServer("StartQuest", q.QuestName, q.QuestLv)
     end)
     if not ok then
-        warn("[FSM] StartQuest fail:", err)
         task.wait(1); setState("IDLE"); return
     end
 
+    -- Chờ 1.5 giây cho GUI cập nhật (tăng từ 0.5s lên 1.5s cho an toàn)
     task.wait(CONFIG.QuestCheckDelay)
 
     if HasActiveQuest() then
-        print("[FSM] ✔ Quest OK:", q.QuestName)
+        notify("✅ Đã nhận Quest: " .. q.QuestName)
         questRetryCount = 0
         setState("FARM_MOB")
     else
         questRetryCount = questRetryCount + 1
-        warn(string.format("[FSM] Quest chưa active (%d/%d)", questRetryCount, CONFIG.QuestRetryMax))
         if questRetryCount >= CONFIG.QuestRetryMax then
+            notify("❌ Lỗi nhận Quest. Thử lại sau!")
             questRetryCount = 0
             task.wait(2)
             setState("IDLE")
@@ -331,6 +316,8 @@ local function stateFarmMob()
 
     local mobPos = Vector3.new(currentQuest.MobPos[1], currentQuest.MobPos[2], currentQuest.MobPos[3])
     local target = CFrame.new(mobPos + Vector3.new(0, CONFIG.MobOffsetY, 0))
+    
+    notify("Đang tới bãi quái: " .. currentQuest.Mob)
     flyTo(target)
     if not isRunning then setState("IDLE"); return end
 
@@ -344,7 +331,7 @@ local function stateFarmMob()
     local farmEnd = tick() + (CONFIG.FarmTimeoutSec or 60)
     while isRunning and tick() < farmEnd do
         if not HasActiveQuest() then
-            print("[FSM] Quest complete → GET_QUEST")
+            notify("🎉 Xong Quest! Chuyển sang Quest mới.")
             setState("GET_QUEST")
             return
         end
@@ -368,33 +355,13 @@ local function stateFarmMob()
     end
 
     if isRunning and HasActiveQuest() then
-        warn("[FSM] Farm timeout, retry quest")
         setState("GET_QUEST")
     end
-end
-
-local function stateRandomFruit()
-    if not isRunning then setState("IDLE"); return end
-    if not CONFIG.AutoRandomFruit then setState("IDLE"); return end
-    pcall(function()
-        if GetPlayerBeli() >= (CONFIG.MinBeliToRandom or 500000) then
-            ReplicatedStorage.Remotes.CommF_:InvokeServer("Cousin", "Buy")
-        end
-    end)
-    task.wait(2)
-    setState("IDLE")
-end
-
-local function stateSea2Quest()
-    if not isRunning then setState("IDLE"); return end
-    task.wait(1)
-    setState("IDLE")
 end
 
 -- ================= LOOP =================
 local handlers = {
     IDLE = stateIdle, GET_QUEST = stateGetQuest, FARM_MOB = stateFarmMob,
-    RANDOM_FRUIT = stateRandomFruit, SEA2_QUEST = stateSea2Quest,
 }
 
 task.spawn(function()
@@ -413,7 +380,6 @@ task.spawn(function()
                     setState("IDLE")
                 end
             else
-                warn("[FSM] Unknown state:", State)
                 setState("IDLE")
             end
         end
@@ -425,10 +391,7 @@ end)
 return {
     SetRunning = function(v)
         isRunning = v == true
-        if not isRunning then
-            stopActiveTween()
-            setCanCollide(true)
-        end
+        if not isRunning then stopActiveTween(); setCanCollide(true) end
     end,
     GetState = function() return State end,
     GetQuest = function() return currentQuest end,
