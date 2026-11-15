@@ -65,10 +65,29 @@ local questRetryCount   = 0
 -- HELPERS
 -- =========================================================
 
-local function getCharacter()
-    local char = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
-    local hrp  = char:WaitForChild("HumanoidRootPart", 5)
-    return char, hrp
+local _questsCache = nil
+local _questsCacheTime = 0
+
+local function LoadQuests(forceRefresh)
+    if not forceRefresh and _questsCache and (tick() - _questsCacheTime < CONFIG.QuestCacheTTL) then
+        return _questsCache
+    end
+    local ok, raw = pcall(function()
+        return game:HttpGet(BASE_URL .. "quests.json")
+    end)
+    if not ok or type(raw) ~= "string" or #raw == 0 then
+        return _questsCache or {}
+    end
+    local ok2, decoded = pcall(HttpService.JSONDecode, HttpService, raw)
+    if ok2 and type(decoded) == "table" then
+        -- ✅ FIX: quests.json có wrapper "Sea1" → lấy mảng bên trong
+        local list = decoded.Sea1 or decoded
+        if type(list) == "table" and #list > 0 then
+            _questsCache = list
+            _questsCacheTime = tick()
+        end
+    end
+    return _questsCache or {}
 end
 
 local function stopActiveTween()
