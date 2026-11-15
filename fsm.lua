@@ -286,4 +286,49 @@ local Actions = {
                 -- Kích hoạt đòn tấn công liên tục qua VirtualUser và Tool
                 pcall(function()
                     VirtualUser:CaptureController()
-                    VirtualUser:Button1Down(Vector2.new(1
+                    VirtualUser:Button1Down(Vector2.new(1280, 672))
+                end)
+
+                local tool = LocalPlayer.Character:FindFirstChildOfClass("Tool")
+                if tool then
+                    pcall(function() tool:Activate() end)
+                end
+
+                -- Kích hoạt Remote chuẩn của game nếu có
+                pcall(function()
+                    local Net = ReplicatedStorage:FindFirstChild("Modules") and ReplicatedStorage.Modules:FindFirstChild("Net")
+                    if Net and Net:FindFirstChild("RE/RegisterAttack") then
+                        Net.RE.RegisterAttack:FireServer(targetMob.HumanoidRootPart.CFrame)
+                    end
+                end)
+            end
+        else
+            SetUI("FLY TO SPAWN: " .. q.Mob)
+            StableFlyTo(q.MobCFrame)
+        end
+    end
+}
+
+-- 9. Vòng Lặp Chính
+task.spawn(function()
+    while true do
+        if FSM.Running then
+            pcall(AutoStoreFruits)
+            local foundFruit = CheckAndCollectFruit()
+            if not foundFruit then
+                local action = Actions[FSM.State]
+                if action then
+                    local ok, err = pcall(action)
+                    if not ok then
+                        warn("[FSM ERROR]:", err)
+                        SetUI("ERROR RECOVERY")
+                        task.wait(1)
+                    end
+                else
+                    FSM.State = "IDLE"
+                end
+            end
+        end
+        task.wait(0.1)
+    end
+end)
