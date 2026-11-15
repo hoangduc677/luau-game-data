@@ -1,93 +1,42 @@
---[[
-    fsm.lua — Finite State Machine cho hệ thống Kaitun Blox Fruits (Sea 1)
-    ---------------------------------------------------------------
-    Kiến trúc : module split, không obfuscate, chạy trong executor
-    States    : IDLE, GET_QUEST, FARM_MOB, RANDOM_FRUIT, SEA2_QUEST
-    Nguồn     : BASE_URL = "https://raw.githubusercontent.com/hoangduc677/luau-game-data/main/"
-    ---------------------------------------------------------------
-    Kỹ thuật áp dụng từ reference:
-      • GetTargets() quét mob trong bán kính 60 studs (thay vì duyệt toàn bộ workspace)
-      • BodyVelocity hold tên riêng "_KaitunHold" — chống rớt khi đứng chờ NPC
-      • HasActiveQuest() bọc pcall + check từng cấp GUI (tránh lỗi nil)
-      • Chờ 0.5s sau StartQuest để server kịp cập nhật GUI
-      • Cache quests trong 10s — tránh HttpGet lặp lại mỗi vòng
-]]
-
--- =========================================================
--- SERVICES
--- =========================================================
-local Players           = game:GetService("Players")
+-- fsm.lua — Finite State Machine cho Kaitun Blox Fruits
+local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local TweenService      = game:GetService("TweenService")
-local RunService        = game:GetService("RunService")
-local HttpService       = game:GetService("HttpService")
-local VirtualUser       = game:GetService("VirtualUser")
+local TweenService = game:GetService("TweenService")
+local HttpService = game:GetService("HttpService")
+local VirtualUser = game:GetService("VirtualUser")
 
 local LocalPlayer = Players.LocalPlayer
-
 local BASE_URL = "https://raw.githubusercontent.com/hoangduc677/luau-game-data/main/"
 
--- =========================================================
--- CONFIG — load 1 lần, cache vĩnh viễn
--- =========================================================
+-- ================= CONFIG =================
 local CONFIG = {
-    FlySpeed        = 150,
-    QuestCheckDelay = 0.5,   -- chờ server cập nhật GUI sau StartQuest
-    QuestRetryMax   = 3,
-    FarmRetryDelay  = 1.5,
-    MobOffsetY      = 5,     -- đứng cao hơn mob 5 studs
-    MobRadius       = 60,    -- bán kính quét mob (theo reference)
-    QuestCacheTTL   = 10,    -- cache quests.json trong 10 giây
+    FlySpeed = 150, QuestCheckDelay = 0.5, QuestRetryMax = 3,
+    FarmRetryDelay = 1.5, FarmTimeoutSec = 60, MobOffsetY = 5,
+    MobRadius = 60, QuestCacheTTL = 10, WeaponType = "Melee",
+    AutoStoreFruit = true, AutoRandomFruit = true, MinBeliToRandom = 500000,
 }
-
 do
-    local ok, raw = pcall(function()
-        return game:HttpGet(BASE_URL .. "config.json")
-    end)
+    local ok, raw = pcall(function() return game:HttpGet(BASE_URL .. "config.json") end)
     if ok and type(raw) == "string" and #raw > 0 then
-        local ok2, decoded = pcall(HttpService.JSONDecode, HttpService, raw)
-        if ok2 and type(decoded) == "table" then
-            for k, v in pairs(decoded) do CONFIG[k] = v end
+        local ok2, d = pcall(HttpService.JSONDecode, HttpService, raw)
+        if ok2 and type(d) == "table" then
+            for k, v in pairs(d) do CONFIG[k] = v end
         end
     end
 end
 
--- =========================================================
--- STATE
--- =========================================================
-local State             = "IDLE"
-local isRunning         = true
-local ActiveTween       = nil
-local currentQuest      = nil
-local questRetryCount   = 0
+-- ================= STATE =================
+local State = "IDLE"
+local isRunning = true
+local ActiveTween = nil
+local currentQuest = nil
+local questRetryCount = 0
 
--- =========================================================
--- HELPERS
--- =========================================================
-
-local _questsCache = nil
-local _questsCacheTime = 0
-
-local function LoadQuests(forceRefresh)
-    if not forceRefresh and _questsCache and (tick() - _questsCacheTime < CONFIG.QuestCacheTTL) then
-        return _questsCache
-    end
-    local ok, raw = pcall(function()
-        return game:HttpGet(BASE_URL .. "quests.json")
-    end)
-    if not ok or type(raw) ~= "string" or #raw == 0 then
-        return _questsCache or {}
-    end
-    local ok2, decoded = pcall(HttpService.JSONDecode, HttpService, raw)
-    if ok2 and type(decoded) == "table" then
-        -- ✅ FIX: quests.json có wrapper "Sea1" → lấy mảng bên trong
-        local list = decoded.Sea1 or decoded
-        if type(list) == "table" and #list > 0 then
-            _questsCache = list
-            _questsCacheTime = tick()
-        end
-    end
-    return _questsCache or {}
+-- ================= HELPERS =================
+local function getCharacter()
+    local char = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+    local hrp = char:WaitForChild("HumanoidRootPart", 5)
+    return char, hrp
 end
 
 local function stopActiveTween()
@@ -97,56 +46,34 @@ local function stopActiveTween()
     end
 end
 
--- BodyVelocity hold — dùng khi chờ NPC/portal (pattern từ reference)
-local function createHold(hrp)
-    local old = hrp:FindFirstChild("_KaitunHold")
-    if old then old:Destroy() end
-    local bv = Instance.new("BodyVelocity")
-    bv.Name      = "_KaitunHold"
-    bv.Velocity  = Vector3.zero
-    bv.MaxForce  = Vector3.new(math.huge, math.huge, math.huge)
-    bv.Parent    = hrp
-    return bv
-end
-
-local function destroyHold(hrp)
-    if hrp then
-        local bv = hrp:FindFirstChild("_KaitunHold")
-        if bv then bv:Destroy() end
+local function setCanCollide(v)
+    local char = LocalPlayer.Character
+    if not char then return end
+    for _, part in ipairs(char:GetDescendants()) do
+        if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then
+            part.CanCollide = v
+        end
     end
 end
 
--- Bay tới CFrame với tốc độ cố định, dừng ngay khi isRunning = false
-local function flyTo(targetCFrame, holdDuringFlight)
+local function flyTo(targetCFrame)
     stopActiveTween()
     if not isRunning then return end
-
     local char, hrp = getCharacter()
     if not hrp then return end
-
-    -- Khoá vận tốc (không dùng BodyVelocity theo yêu cầu)
     hrp.AssemblyLinearVelocity = Vector3.zero
-
-    local distance = (targetCFrame.Position - hrp.Position).Magnitude
-    if distance < 1 then return end
-
-    local hold = holdDuringFlight and createHold(hrp) or nil
-
-    local tweenInfo = TweenInfo.new(
-        distance / CONFIG.FlySpeed,
-        Enum.EasingStyle.Linear,
-        Enum.EasingDirection.Out
-    )
-
-    ActiveTween = TweenService:Create(hrp, tweenInfo, { CFrame = targetCFrame })
+    local dist = (targetCFrame.Position - hrp.Position).Magnitude
+    if dist < 1 then return end
+    setCanCollide(false)
+    ActiveTween = TweenService:Create(hrp,
+        TweenInfo.new(dist / CONFIG.FlySpeed, Enum.EasingStyle.Linear),
+        { CFrame = targetCFrame })
     ActiveTween:Play()
     ActiveTween.Completed:Wait()
     ActiveTween = nil
-
-    if hold then hold:Destroy() end
+    setCanCollide(true)
 end
 
--- HasActiveQuest — bọc pcall + check từng cấp (fix lỗi nil)
 local function HasActiveQuest()
     local ok, result = pcall(function()
         local pg = LocalPlayer:FindFirstChild("PlayerGui")
@@ -160,62 +87,44 @@ local function HasActiveQuest()
     return ok and result == true
 end
 
--- GetPlayerLevel — an toàn
 local function GetPlayerLevel()
-    local ok, lv = pcall(function()
-        return LocalPlayer.Data.Level.Value
-    end)
+    local ok, lv = pcall(function() return LocalPlayer.Data.Level.Value end)
     return ok and tonumber(lv) or 1
 end
 
--- GetPlayerBeli
 local function GetPlayerBeli()
-    local ok, beli = pcall(function()
-        return LocalPlayer.Data.Beli.Value
-    end)
-    return ok and tonumber(beli) or 0
+    local ok, b = pcall(function() return LocalPlayer.Data.Beli.Value end)
+    return ok and tonumber(b) or 0
 end
 
--- =========================================================
--- LOAD QUESTS.JSON (cache TTL)
--- =========================================================
-local _questsCache = nil
-local _questsCacheTime = 0
-
+-- ================= LOAD QUESTS =================
+local _questsCache, _questsCacheTime = nil, 0
 local function LoadQuests(forceRefresh)
     if not forceRefresh and _questsCache and (tick() - _questsCacheTime < CONFIG.QuestCacheTTL) then
         return _questsCache
     end
-    local ok, raw = pcall(function()
-        return game:HttpGet(BASE_URL .. "quests.json")
-    end)
-    if not ok or type(raw) ~= "string" or #raw == 0 then
-        return _questsCache or {}
-    end
-    local ok2, decoded = pcall(HttpService.JSONDecode, HttpService, raw)
-    if ok2 and type(decoded) == "table" then
-        _questsCache = decoded
-        _questsCacheTime = tick()
+    local ok, raw = pcall(function() return game:HttpGet(BASE_URL .. "quests.json") end)
+    if not ok or type(raw) ~= "string" or #raw == 0 then return _questsCache or {} end
+    local ok2, d = pcall(HttpService.JSONDecode, HttpService, raw)
+    if ok2 and type(d) == "table" then
+        -- ✅ FIX: quests.json có wrapper "Sea1"
+        local list = d.Sea1 or d
+        if type(list) == "table" and #list > 0 then
+            _questsCache = list
+            _questsCacheTime = tick()
+        end
     end
     return _questsCache or {}
 end
 
--- Chọn quest phù hợp với level
 local function PickQuest(playerLevel)
     local quests = LoadQuests()
     if type(quests) ~= "table" or #quests == 0 then return nil end
-
-    -- Ưu tiên quest trong range [MinLv, QuestLv]
-    for _, q in ipairs(quests) do
-        if playerLevel >= (q.MinLv or 0) and playerLevel <= (q.QuestLv or 0) then
-            return q
-        end
-    end
-    -- Fallback: quest cao nhất có MinLv <= level
     local best = nil
     for _, q in ipairs(quests) do
-        if playerLevel >= (q.MinLv or 0) then
-            if not best or (q.QuestLv or 0) > (best.QuestLv or 0) then
+        local minLv = tonumber(q.MinLv) or 0
+        if playerLevel >= minLv then
+            if not best or minLv > (tonumber(best.MinLv) or 0) then
                 best = q
             end
         end
@@ -223,9 +132,7 @@ local function PickQuest(playerLevel)
     return best
 end
 
--- =========================================================
--- GET TARGETS — quét mob trong bán kính (pattern từ reference)
--- =========================================================
+-- ================= COMBAT =================
 local function GetEnemiesInRadius(origin, radius)
     radius = radius or CONFIG.MobRadius
     local result = {}
@@ -243,25 +150,24 @@ local function GetEnemiesInRadius(origin, radius)
     return result
 end
 
--- =========================================================
--- AUTO EQUIP WEAPON
--- =========================================================
+local function getToolType(tool)
+    local attr = tool:GetAttribute("WeaponType")
+    if attr then return attr end
+    local tip = tool.ToolTip
+    if tip and tip ~= "" then return tip end
+    return "Unknown"
+end
+
 local function AutoEquipWeapon(weaponType)
     weaponType = weaponType or CONFIG.WeaponType or "Melee"
     local char = LocalPlayer.Character
-    if not char then return end
-
-    -- Nếu đã cầm tool đúng loại thì thôi
-    local currentTool = char:FindFirstChildOfClass("Tool")
-    if currentTool and currentTool:GetAttribute("WeaponType") == weaponType then
-        return true
-    end
-
+    if not char then return false end
+    local cur = char:FindFirstChildOfClass("Tool")
+    if cur and getToolType(cur) == weaponType then return true end
     local backpack = LocalPlayer:FindFirstChild("Backpack")
     if not backpack then return false end
-
     for _, tool in ipairs(backpack:GetChildren()) do
-        if tool:IsA("Tool") and tool:GetAttribute("WeaponType") == weaponType then
+        if tool:IsA("Tool") and getToolType(tool) == weaponType then
             local hum = char:FindFirstChildOfClass("Humanoid")
             if hum then
                 hum:EquipTool(tool)
@@ -273,33 +179,24 @@ local function AutoEquipWeapon(weaponType)
     return false
 end
 
--- =========================================================
--- ATTACK MOB — dùng Tool:Activate + VirtualUser click
--- =========================================================
 local function AttackMob(targetRoot)
     local char = LocalPlayer.Character
     if not char then return end
     local tool = char:FindFirstChildOfClass("Tool")
     if not tool then return end
-
-    -- Cách 1: Activate tool
     pcall(function() tool:Activate() end)
-
-    -- Cách 2: VirtualUser click vào vị trí mob trên màn hình
     if targetRoot then
         pcall(function()
-            local camera = workspace.CurrentCamera
-            local screenPos, onScreen = camera:WorldToViewportPoint(targetRoot.Position)
+            local cam = workspace.CurrentCamera
+            local pos, onScreen = cam:WorldToViewportPoint(targetRoot.Position)
             if onScreen then
-                VirtualUser:ClickButton1(Vector2.new(screenPos.X, screenPos.Y))
+                VirtualUser:ClickButton1(Vector2.new(pos.X, pos.Y))
             end
         end)
     end
 end
 
--- =========================================================
--- ANTI-AFK (pattern phổ biến)
--- =========================================================
+-- ================= ANTI-AFK =================
 LocalPlayer.Idled:Connect(function()
     pcall(function()
         VirtualUser:CaptureController()
@@ -307,11 +204,7 @@ LocalPlayer.Idled:Connect(function()
     end)
 end)
 
--- =========================================================
--- BACKGROUND TASKS — chạy song song, không thuộc FSM
--- =========================================================
-
--- Chọn phe Pirates
+-- ================= BACKGROUND =================
 task.spawn(function()
     task.wait(2)
     pcall(function()
@@ -319,15 +212,14 @@ task.spawn(function()
     end)
 end)
 
--- Tự cộng điểm Stats 70% Melee / 30% Defense
 task.spawn(function()
     while true do
         if isRunning then
             pcall(function()
-                local points = LocalPlayer.Data.Points.Value
-                if points > 0 then
-                    local melee = math.floor(points * 0.7)
-                    local def   = points - melee
+                local pts = LocalPlayer.Data.Points.Value
+                if pts and pts > 0 then
+                    local melee = math.floor(pts * 0.7)
+                    local def = pts - melee
                     if melee > 0 then
                         ReplicatedStorage.Remotes.CommF_:InvokeServer("AddPoint", "Melee", melee)
                     end
@@ -341,26 +233,21 @@ task.spawn(function()
     end
 end)
 
--- Bật Haki Buso + mua kỹ năng khi đủ tiền
 task.spawn(function()
     while true do
         if isRunning then
             pcall(function()
-                local CommF = ReplicatedStorage.Remotes.CommF_
-                -- Buso
-                CommF:InvokeServer("BuyHaki", "Buso")
-                -- Geppo / Soru / BlackLeg (chỉ mua khi đủ beli)
+                local C = ReplicatedStorage.Remotes.CommF_
+                C:InvokeServer("BuyHaki", "Buso")
                 local beli = GetPlayerBeli()
-                if beli >= 100000 then CommF:InvokeServer("BuyHaki", "Geppo") end
-                if beli >= 150000 then CommF:InvokeServer("BuyHaki", "Soru") end
-                if beli >= 500000 then CommF:InvokeServer("BlackLeg", "Learn") end
+                if beli >= 100000 then C:InvokeServer("BuyHaki", "Geppo") end
+                if beli >= 150000 then C:InvokeServer("BuyHaki", "Soru") end
             end)
         end
         task.wait(30)
     end
 end)
 
--- Tự nhặt và cất trái vào kho
 task.spawn(function()
     while true do
         if isRunning and CONFIG.AutoStoreFruit then
@@ -368,9 +255,8 @@ task.spawn(function()
                 local char = LocalPlayer.Character
                 if not char then return end
                 for _, tool in ipairs(char:GetChildren()) do
-                    if tool:IsA("Tool") and tool:GetAttribute("WeaponType") == "Blox Fruit" then
-                        local fruitName = tool.Name
-                        ReplicatedStorage.Remotes.CommF_:InvokeServer("StoreFruit", fruitName)
+                    if tool:IsA("Tool") and getToolType(tool) == "Blox Fruit" then
+                        ReplicatedStorage.Remotes.CommF_:InvokeServer("StoreFruit", tool.Name)
                     end
                 end
             end)
@@ -379,73 +265,57 @@ task.spawn(function()
     end
 end)
 
--- =========================================================
--- FSM STATE HANDLERS
--- =========================================================
-
-local function setState(newState)
-    if State ~= newState then
-        print(string.format("[FSM] %s → %s", State, newState))
-        State = newState
+-- ================= FSM =================
+local function setState(s)
+    if State ~= s then
+        print(string.format("[FSM] %s → %s", State, s))
+        State = s
     end
 end
 
--- ---------- IDLE ----------
 local function stateIdle()
     stopActiveTween()
     task.wait(0.5)
     if not isRunning then return end
-
-    if HasActiveQuest() then
-        setState("FARM_MOB")
-    else
-        setState("GET_QUEST")
-    end
+    if HasActiveQuest() then setState("FARM_MOB") else setState("GET_QUEST") end
 end
 
--- ---------- GET_QUEST ----------
 local function stateGetQuest()
     if not isRunning then setState("IDLE"); return end
-
-    local playerLevel = GetPlayerLevel()
-    local q = PickQuest(playerLevel)
+    local lv = GetPlayerLevel()
+    local q = PickQuest(lv)
     if not q then
-        warn("[FSM] Không tìm được quest phù hợp cho level", playerLevel)
+        warn("[FSM] Không tìm được quest cho level", lv)
         task.wait(2)
         setState("IDLE")
         return
     end
     currentQuest = q
 
-    -- Bay tới NPC
-    local npcPos = Vector3.new(q.NPC[1], q.NPC[2], q.NPC[3])
-    flyTo(CFrame.new(npcPos), false)
-
+    local npc = Vector3.new(q.NPC[1], q.NPC[2], q.NPC[3])
+    flyTo(CFrame.new(npc))
     if not isRunning then setState("IDLE"); return end
 
-    -- Gọi StartQuest
     local ok, err = pcall(function()
         ReplicatedStorage.Remotes.CommF_:InvokeServer("StartQuest", q.QuestName, q.QuestLv)
     end)
     if not ok then
-        warn("[FSM] StartQuest lỗi:", err)
-        task.wait(1)
-        setState("IDLE")
-        return
+        warn("[FSM] StartQuest fail:", err)
+        task.wait(1); setState("IDLE"); return
     end
 
-    -- Chờ GUI cập nhật — FIX LỖI KẸT NPC
     task.wait(CONFIG.QuestCheckDelay)
 
     if HasActiveQuest() then
-        print("[FSM] ✔ Nhận quest thành công:", q.QuestName)
+        print("[FSM] ✔ Quest OK:", q.QuestName)
         questRetryCount = 0
         setState("FARM_MOB")
     else
-        questRetryCount += 1
-        warn(string.format("[FSM] Quest chưa kích hoạt (%d/%d)", questRetryCount, CONFIG.QuestRetryMax))
+        questRetryCount = questRetryCount + 1
+        warn(string.format("[FSM] Quest chưa active (%d/%d)", questRetryCount, CONFIG.QuestRetryMax))
         if questRetryCount >= CONFIG.QuestRetryMax then
             questRetryCount = 0
+            task.wait(2)
             setState("IDLE")
         else
             task.wait(0.5)
@@ -454,40 +324,34 @@ local function stateGetQuest()
     end
 end
 
--- ---------- FARM_MOB ----------
 local function stateFarmMob()
     if not isRunning then setState("IDLE"); return end
     if not currentQuest then setState("GET_QUEST"); return end
+    if not HasActiveQuest() then setState("GET_QUEST"); return end
 
-    -- Nếu quest đã hoàn thành thì quay lại
-    if not HasActiveQuest() then
-        print("[FSM] Quest hoàn thành → GET_QUEST")
-        setState("GET_QUEST")
-        return
-    end
-
-    -- Bay tới bãi quái (cao hơn mob 5 studs)
-    local mobPos  = Vector3.new(currentQuest.MobPos[1], currentQuest.MobPos[2], currentQuest.MobPos[3])
-    local target  = CFrame.new(mobPos + Vector3.new(0, CONFIG.MobOffsetY, 0))
-    flyTo(target, false)
-
+    local mobPos = Vector3.new(currentQuest.MobPos[1], currentQuest.MobPos[2], currentQuest.MobPos[3])
+    local target = CFrame.new(mobPos + Vector3.new(0, CONFIG.MobOffsetY, 0))
+    flyTo(target)
     if not isRunning then setState("IDLE"); return end
 
-    -- Giữ vị trí ổn định
     local char, hrp = getCharacter()
     if hrp then
         hrp.CFrame = target
         hrp.AssemblyLinearVelocity = Vector3.zero
     end
+    AutoEquipWeapon(CONFIG.WeaponType)
 
-    -- Equip weapon
-    AutoEquipWeapon(CONFIG.WeaponType or "Melee")
-
-    -- Vòng lặp đánh quái trong 5s
-    local attackEnd = tick() + 5
-    while isRunning and tick() < attackEnd do
-        if not HasActiveQuest() then break end
+    local farmEnd = tick() + (CONFIG.FarmTimeoutSec or 60)
+    while isRunning and tick() < farmEnd do
+        if not HasActiveQuest() then
+            print("[FSM] Quest complete → GET_QUEST")
+            setState("GET_QUEST")
+            return
+        end
         if not hrp or not hrp.Parent then break end
+
+        hrp.CFrame = target
+        hrp.AssemblyLinearVelocity = Vector3.zero
 
         local enemies = GetEnemiesInRadius(hrp.Position, CONFIG.MobRadius)
         if #enemies == 0 then
@@ -497,23 +361,23 @@ local function stateFarmMob()
                 if not isRunning then break end
                 if e.humanoid.Health <= 0 then break end
                 AttackMob(e.root)
-                task.wait(0.1)
+                task.wait(0.05)
             end
         end
         task.wait(0.05)
     end
 
-    task.wait(CONFIG.FarmRetryDelay)
+    if isRunning and HasActiveQuest() then
+        warn("[FSM] Farm timeout, retry quest")
+        setState("GET_QUEST")
+    end
 end
 
--- ---------- RANDOM_FRUIT ----------
 local function stateRandomFruit()
     if not isRunning then setState("IDLE"); return end
     if not CONFIG.AutoRandomFruit then setState("IDLE"); return end
-
     pcall(function()
-        local beli = GetPlayerBeli()
-        if beli >= (CONFIG.MinBeliToRandom or 500000) then
+        if GetPlayerBeli() >= (CONFIG.MinBeliToRandom or 500000) then
             ReplicatedStorage.Remotes.CommF_:InvokeServer("Cousin", "Buy")
         end
     end)
@@ -521,31 +385,23 @@ local function stateRandomFruit()
     setState("IDLE")
 end
 
--- ---------- SEA2_QUEST (stub) ----------
 local function stateSea2Quest()
     if not isRunning then setState("IDLE"); return end
-    -- TODO: logic Sea 2 — chưa implement
     task.wait(1)
     setState("IDLE")
 end
 
--- =========================================================
--- MAIN LOOP
--- =========================================================
+-- ================= LOOP =================
 local handlers = {
-    IDLE         = stateIdle,
-    GET_QUEST    = stateGetQuest,
-    FARM_MOB     = stateFarmMob,
-    RANDOM_FRUIT = stateRandomFruit,
-    SEA2_QUEST   = stateSea2Quest,
+    IDLE = stateIdle, GET_QUEST = stateGetQuest, FARM_MOB = stateFarmMob,
+    RANDOM_FRUIT = stateRandomFruit, SEA2_QUEST = stateSea2Quest,
 }
 
 task.spawn(function()
     while true do
         if not isRunning then
             stopActiveTween()
-            local _, hrp = getCharacter()
-            destroyHold(hrp)
+            setCanCollide(true)
             setState("IDLE")
             task.wait(0.5)
         else
@@ -565,20 +421,16 @@ task.spawn(function()
     end
 end)
 
--- =========================================================
--- PUBLIC API (dùng từ ui.lua)
--- =========================================================
+-- ================= API =================
 return {
     SetRunning = function(v)
         isRunning = v == true
         if not isRunning then
             stopActiveTween()
-            local _, hrp = getCharacter()
-            destroyHold(hrp)
+            setCanCollide(true)
         end
     end,
-    GetState    = function() return State end,
-    GetQuest    = function() return currentQuest end,
-    GetTargets  = GetEnemiesInRadius,   -- expose để module khác dùng
-    IsRunning   = function() return isRunning end,
+    GetState = function() return State end,
+    GetQuest = function() return currentQuest end,
+    IsRunning = function() return isRunning end,
 }
