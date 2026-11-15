@@ -1,4 +1,4 @@
--- Tệp: fsm.lua (Fix dứt điểm lỗi đánh quái và bay sát quái)
+-- Tệp: fsm.lua (Tối ưu hóa chiến đấu dứt điểm Sea 1)
 local HttpService = game:GetService("HttpService")
 local TweenService = game:GetService("TweenService")
 local RunService = game:GetService("RunService")
@@ -30,12 +30,12 @@ local Config = LoadJSON("config.json") or { FlySpeed = 220, WeaponType = "Melee"
 local QuestsData = LoadJSON("quests.json")
 
 local okUI, UIModule = pcall(function()
-    return loadstring(game:HttpGet(BASE_URL + "ui.lua" .. CACHE_BUST))()
+    return loadstring(game:HttpGet(BASE_URL .. "ui.lua" .. CACHE_BUST))()
 end)
 
 local Dashboard = nil
 if okUI and UIModule then
-    Dashboard = UIModule.CreateDashboard("⚡ KAITUN COMBAT FIX", function(isRunning)
+    Dashboard = UIModule.CreateDashboard("⚡ KAITUN ULTIMATE FARM", function(isRunning)
         FSM.Running = isRunning
         if not isRunning and FSM.ActiveTween then
             FSM.ActiveTween:Cancel()
@@ -104,34 +104,20 @@ local function StableFlyTo(targetCF)
     return true
 end
 
--- 4. Tự Động Trang Bị Vũ Khí Chuẩn Xác
+-- 4. Tự Động Trang Bị Vũ Khí
 local function AutoEquipWeapon()
     local char = LocalPlayer.Character
     local hum = char and char:FindFirstChildOfClass("Humanoid")
     if not hum then return end
 
     local targetType = Config.WeaponType or "Melee"
-    -- Kiểm tra xem trên tay đã cầm đúng loại vũ khí chưa
-    local currentTool = char:FindFirstChildOfClass("Tool")
-    if currentTool and currentTool.ToolTip == targetType then
-        return currentTool
-    end
-
-    -- Nếu chưa, tìm trong Backpack và trang bị
     for _, tool in ipairs(LocalPlayer.Backpack:GetChildren()) do
-        if tool:IsA("Tool") and tool.ToolTip == targetType then
+        if tool:IsA("Tool") then
             hum:EquipTool(tool)
             return tool
         end
     end
-    
-    -- Nếu không tìm thấy theo ToolTip, lấy bất kỳ Tool nào có sẵn
-    local fallbackTool = LocalPlayer.Backpack:FindFirstChildOfClass("Tool")
-    if fallbackTool then
-        hum:EquipTool(fallbackTool)
-        return fallbackTool
-    end
-    return nil
+    return char:FindFirstChildOfClass("Tool")
 end
 
 -- 5. Lấy Quest Theo Level
@@ -225,7 +211,7 @@ local function CheckAndCollectFruit()
     return false
 end
 
--- 8. FSM Actions (Tối ưu hóa hành vi đánh quái trực tiếp)
+-- 8. FSM Actions (Fix Triệt ĐT Lỗi Đánh Quái)
 local Actions = {
     IDLE = function()
         if game.PlaceId ~= 2753915549 then
@@ -270,69 +256,34 @@ local Actions = {
         local q = GetCurrentQuest()
         if not q then return end
 
+        -- Tìm quái gần nhất bất kể sai lệch ký tự tên nhỏ
         local targetMob = nil
+        local shortestDist = 9e9
         if workspace:FindFirstChild("Enemies") then
+            local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
             for _, mob in ipairs(workspace.Enemies:GetChildren()) do
                 if mob:FindFirstChild("Humanoid") and mob:FindFirstChild("HumanoidRootPart") and mob.Humanoid.Health > 0 then
-                    if string.find(mob.Name, q.Mob) then
-                        targetMob = mob
-                        break
+                    if hrp then
+                        local dist = (mob.HumanoidRootPart.Position - hrp.Position).Magnitude
+                        if dist < shortestDist then
+                            shortestDist = dist
+                            targetMob = mob
+                        end
                     end
                 end
             end
         end
 
         if targetMob and targetMob:FindFirstChild("HumanoidRootPart") then
-            SetUI("ATTACKING: " .. q.Mob)
+            SetUI("FARMING: " .. (targetMob.Name or q.Mob))
             AutoEquipWeapon()
             
             local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
             if hrp then
-                -- Ghim sát ngay đầu/lưng quái (cách 4 studs thay vì treo cao 10 studs)
-                hrp.CFrame = targetMob.HumanoidRootPart.CFrame * CFrame.new(0, 4, 2)
+                -- Ghim sát đầu quái và luôn hướng mặt về phía quái
+                hrp.CFrame = targetMob.HumanoidRootPart.CFrame * CFrame.new(0, 4, 1)
                 
-                -- Giả lập bấm chuột trái liên tục để chém quái
+                -- Kích hoạt đòn tấn công liên tục qua VirtualUser và Tool
                 pcall(function()
                     VirtualUser:CaptureController()
-                    VirtualUser:Button1Down(Vector2.new(1280, 672))
-                end)
-
-                -- Kích hoạt Remote tấn công nếu game hỗ trợ
-                pcall(function()
-                    local Net = ReplicatedStorage:FindFirstChild("Modules") and ReplicatedStorage.Modules:FindFirstChild("Net")
-                    if Net then
-                        local regAttack = Net:FindFirstChild("RE/RegisterAttack")
-                        if regAttack then regAttack:FireServer() end
-                    end
-                end)
-            end
-        else
-            SetUI("FLY TO SPAWN: " .. q.Mob)
-            StableFlyTo(q.MobCFrame)
-        end
-    end
-}
-
--- 9. Vòng Lặp Chính
-task.spawn(function()
-    while true do
-        if FSM.Running then
-            pcall(AutoStoreFruits)
-            local foundFruit = CheckAndCollectFruit()
-            if not foundFruit then
-                local action = Actions[FSM.State]
-                if action then
-                    local ok, err = pcall(action)
-                    if not ok then
-                        warn("[FSM ERROR]:", err)
-                        SetUI("ERROR RECOVERY")
-                        task.wait(1)
-                    end
-                else
-                    FSM.State = "IDLE"
-                end
-            end
-        end
-        task.wait(0.15)
-    end
-end)
+                    VirtualUser:Button1Down(Vector2.new(1
