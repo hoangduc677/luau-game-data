@@ -3,6 +3,6 @@
   "AutoRandomFruit": true,
   "AutoStoreFruit": true,
   "WeaponType": "Melee",
-  "FlySpeed": 300,
+  "FlySpeed": 150,
   "MinBeliToRandom": 500000
 }
