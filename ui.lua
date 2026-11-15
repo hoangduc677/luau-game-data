@@ -1,4 +1,4 @@
--- Tệp: ui.lua (Giao diện tinh gọn)
+-- Tệp: ui.lua
 local CoreGui = game:GetService("CoreGui")
 local UI = {}
 
@@ -13,7 +13,7 @@ function UI.CreateDashboard(titleText, onToggleCallback)
     gui.ResetOnSpawn = false
 
     local main = Instance.new("Frame", gui)
-    main.Size = UDim2.new(0, 240, 0, 115) -- Thu gọn chiều cao vì đã bỏ nút tốc độ
+    main.Size = UDim2.new(0, 240, 0, 115)
     main.Position = UDim2.new(0.5, -120, 0.12, 0)
     main.BackgroundColor3 = Color3.fromRGB(20, 22, 28)
     main.Active = true
@@ -27,7 +27,7 @@ function UI.CreateDashboard(titleText, onToggleCallback)
     local title = Instance.new("TextLabel", main)
     title.Size = UDim2.new(1, 0, 0, 28)
     title.BackgroundTransparency = 1
-    title.Text = titleText or "KAITUN PANEL"
+    title.Text = titleText or "⚡ KAITUN BLOX FRUITS"
     title.TextColor3 = Color3.fromRGB(100, 170, 255)
     title.Font = Enum.Font.GothamBold
     title.TextSize = 12
@@ -61,7 +61,7 @@ function UI.CreateDashboard(titleText, onToggleCallback)
 
     return {
         SetStatus = function(text)
-            status.Text = "State: " + tostring(text) -- sửa lại cho an toàn hoặc text concat thông thường
+            status.Text = "State: " .. tostring(text)
         end
     }
 end
