@@ -1,4 +1,4 @@
--- Tệp: fsm.lua (Bản gộp hoàn chỉnh cho Sea 1)
+-- Tệp: fsm.lua (Hệ thống Kaitun Sea 1 Siêu Ổn Định)
 local HttpService = game:GetService("HttpService")
 local TweenService = game:GetService("TweenService")
 local RunService = game:GetService("RunService")
@@ -14,12 +14,13 @@ local FSM = {
     State = "IDLE",
     Running = true,
     ActiveTween = nil,
-    LastRandomTick = 0
+    LastRandomTick = 0,
+    LastAttackTick = 0
 }
 
 local Sea1Bought = { Geppo = false, Buso = false, Soru = false, BlackLeg = false }
 
--- 1. Nạp JSON và UI
+-- 1. Nạp Cấu Hình và Giao Diện
 local function LoadJSON(fileName)
     local ok, raw = pcall(function() return game:HttpGet(BASE_URL .. fileName .. CACHE_BUST) end)
     if not ok then return nil end
@@ -27,7 +28,7 @@ local function LoadJSON(fileName)
     return ok2 and data or nil
 end
 
-local Config = LoadJSON("config.json") or { FlySpeed = 300, WeaponType = "Melee", AutoFarm = true }
+local Config = LoadJSON("config.json") or { FlySpeed = 180, WeaponType = "Melee", AutoFarm = true, AutoStoreFruit = true }
 local QuestsData = LoadJSON("quests.json")
 
 local okUI, UIModule = pcall(function()
@@ -36,7 +37,7 @@ end)
 
 local Dashboard = nil
 if okUI and UIModule then
-    Dashboard = UIModule.CreateDashboard("⚡ KAITUN SEA 1", function(isRunning)
+    Dashboard = UIModule.CreateDashboard("⚡ KAITUN SEA 1 STABLE", function(isRunning)
         FSM.Running = isRunning
         if not isRunning and FSM.ActiveTween then
             FSM.ActiveTween:Cancel()
@@ -53,35 +54,36 @@ local function ChangeState(newState, detailText)
     SetUI(detailText or newState)
 end
 
--- 2. Chống rơi (Anti-Gravity) & Xuyên tường (Noclip)
+-- 2. Chống văng, Chống AFK & Khóa Vận Tốc Bay
 RunService.Stepped:Connect(function()
+    if not FSM.Running then return end
     local char = LocalPlayer.Character
     if not char then return end
-    local hrp = char:FindFirstChild("HumanoidRootPart")
 
-    if not FSM.Running then
-        if hrp and hrp:FindFirstChild("MeowBV") then
-            hrp.MeowBV:Destroy()
-        end
-        return
-    end
-
+    -- Vô hiệu hóa va chạm để chống kẹt gây crash
     for _, part in ipairs(char:GetDescendants()) do
-        if part:IsA("BasePart") and part.CanCollide then
+        if part:IsA("BasePart") and part.CanCollide and part.Name ~= "HumanoidRootPart" then
             part.CanCollide = false
         end
     end
 
-    if hrp and not hrp:FindFirstChild("MeowBV") then
-        local bv = Instance.new("BodyVelocity")
-        bv.Name = "MeowBV"
-        bv.Velocity = Vector3.new(0, 0, 0)
-        bv.MaxForce = Vector3.new(9e9, 9e9, 9e9)
-        bv.Parent = hrp
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    if hrp then
+        -- Giữ lơ lửng, triệt tiêu trọng lực để bay cực mượt
+        if not hrp:FindFirstChild("StabilityBV") then
+            local bv = Instance.new("BodyVelocity")
+            bv.Name = "StabilityBV"
+            bv.Velocity = Vector3.new(0, 0, 0)
+            bv.MaxForce = Vector3.new(9e9, 9e9, 9e9)
+            bv.Parent = hrp
+        end
+        -- Chống AFK bằng cách liên tục gửi tín hiệu hoạt động
+        VirtualUser:CaptureController()
+        VirtualUser:Button2Down(Vector2.new(999, 999))
     end
 end)
 
--- 3. Hàm Fly ổn định
+-- 3. Hàm Bay Ổn Định (Không bị Teleport Check)
 local function StableFlyTo(targetCF)
     local char = LocalPlayer.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
@@ -94,7 +96,7 @@ local function StableFlyTo(targetCF)
     end
 
     if FSM.ActiveTween then FSM.ActiveTween:Cancel() end
-    local speed = Config.FlySpeed or 300
+    local speed = Config.FlySpeed or 180
     local duration = dist / speed
 
     local tween = TweenService:Create(hrp, TweenInfo.new(duration, Enum.EasingStyle.Linear), {CFrame = targetCF})
@@ -117,7 +119,7 @@ local function StableFlyTo(targetCF)
     return true
 end
 
--- 4. Tự cầm vũ khí
+-- 4. Tự Động Cầm Vũ Khí Cày Thuê
 local function AutoEquipWeapon()
     local char = LocalPlayer.Character
     local hum = char and char:FindFirstChildOfClass("Humanoid")
@@ -132,7 +134,7 @@ local function AutoEquipWeapon()
     end
 end
 
--- 5. Xác định Sea và lấy Quest theo Level
+-- 5. Xác Định Sea và Lấy Dữ Liệu Quest
 local function GetCurrentSeaKey()
     local placeId = game.PlaceId
     if placeId == 2753915549 then return "Sea1"
@@ -156,11 +158,11 @@ local function GetCurrentQuest()
 
     return {
         QuestName = bestQuest.QuestName,
-        QuestLv = bestQuest.QuestLv,
+        QuestLv = q.QuestLv,
         Mob = bestQuest.Mob,
-        NPCCFrame = CFrame.new(bestQuest.NPC[1], bestQuest.NPC[2] + 3, bestQuest.NPC[3]),
-        MobCFrame = bestQuest.MobPos and CFrame.new(bestQuest.MobPos[1], bestQuest.MobPos[2] + 15, bestQuest.MobPos[3])
-                    or CFrame.new(bestQuest.NPC[1], bestQuest.NPC[2] + 25, bestQuest.NPC[3])
+        NPCCFrame = CFrame.new(bestQuest.NPC[1], bestQuest.NPC[2] + 4, bestQuest.NPC[3]),
+        MobCFrame = bestQuest.MobPos and CFrame.new(bestQuest.MobPos[1], bestQuest.MobPos[2] + 12, bestQuest.MobPos[3])
+                    or CFrame.new(bestQuest.NPC[1], bestQuest.NPC[2] + 20, bestQuest.NPC[3])
     }
 end
 
@@ -171,7 +173,35 @@ local function HasActiveQuest()
     return ok and visible or false
 end
 
--- 6. Tự động nâng chỉ số, mua kỹ năng & kiểm tra Lv 700 ở Sea 1
+-- 6. Hệ Thống Combat Trực Tiếp (Thay Thế VirtualUser)
+local function AttackTarget(targetMob)
+    AutoEquipWeapon()
+    local char = LocalPlayer.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    local enemyHrp = targetMob:FindFirstChild("HumanoidRootPart")
+    if not hrp or not enemyHrp then return end
+
+    -- Khóa vị trí ngay trên đầu quái để tung chiêu
+    hrp.CFrame = enemyHrp.CFrame * CFrame.new(0, 10, 0)
+
+    -- Kích hoạt đòn đánh liên tục thông qua Tool hoặc Remote
+    local tool = char:FindFirstChildOfClass("Tool") or LocalPlayer.Backpack:FindFirstChildOfClass("Tool")
+    if tool then
+        tool:Activate()
+    end
+
+    pcall(function()
+        local Net = ReplicatedStorage:FindFirstChild("Modules"):FindFirstChild("Net")
+        if Net then
+            local attackRemote = Net:FindFirstChild("RE/RegisterAttack") or Net:FindFirstChild("RE/RegisterHit")
+            if attackRemote then
+                attackRemote:FireServer(CFrame.new())
+            end
+        end
+    end)
+end
+
+-- 7. Logic Tiến Trình Sea 1 (Tự động hóa toàn diện)
 local function HandleSea1Progression()
     if GetCurrentSeaKey() ~= "Sea1" then return false end
 
@@ -180,6 +210,10 @@ local function HandleSea1Progression()
     local beli = LocalPlayer.Data.Beli.Value
     local points = LocalPlayer.Data.Points.Value
 
+    -- Tự động chọn phe Hải Tặc khi vào game
+    pcall(function() CommF:InvokeServer("SetTeam", "Pirates") end)
+
+    -- Tự động cộng điểm tối ưu dame
     if points > 0 then
         pcall(function()
             CommF:InvokeServer("AddPoint", "Melee", math.ceil(points * 0.7))
@@ -187,27 +221,17 @@ local function HandleSea1Progression()
         end)
     end
 
+    -- Duy trì trạng thái Haki
     if LocalPlayer.Character and not LocalPlayer.Character:FindFirstChild("HasBuso") then
         pcall(function() CommF:InvokeServer("Buso") end)
     end
 
+    -- Mua kỹ năng tiến cấp
     pcall(function()
-        if beli >= 10000 and not Sea1Bought.Geppo then
-            CommF:InvokeServer("BuyHaki", "Geppo")
-            Sea1Bought.Geppo = true
-        end
-        if beli >= 25000 and not Sea1Bought.Buso then
-            CommF:InvokeServer("BuyHaki", "Buso")
-            Sea1Bought.Buso = true
-        end
-        if beli >= 150000 and not Sea1Bought.BlackLeg then
-            CommF:InvokeServer("BuyBlackLeg")
-            Sea1Bought.BlackLeg = true
-        end
-        if beli >= 100000 and not Sea1Bought.Soru then
-            CommF:InvokeServer("BuyHaki", "Soru")
-            Sea1Bought.Soru = true
-        end
+        if beli >= 10000 and not Sea1Bought.Geppo then CommF:InvokeServer("BuyHaki", "Geppo"); Sea1Bought.Geppo = true end
+        if beli >= 25000 and not Sea1Bought.Buso then CommF:InvokeServer("BuyHaki", "Buso"); Sea1Bought.Buso = true end
+        if beli >= 150000 and not Sea1Bought.BlackLeg then CommF:InvokeServer("BuyBlackLeg"); Sea1Bought.BlackLeg = true end
+        if beli >= 100000 and not Sea1Bought.Soru then CommF:InvokeServer("BuyHaki", "Soru"); Sea1Bought.Soru = true end
     end)
 
     if level >= 700 then
@@ -217,7 +241,7 @@ local function HandleSea1Progression()
     return false
 end
 
--- 7. Nhặt & Cất Trái Ác Quỷ
+-- 8. Quản Lý Trái Ác Quỷ An Toàn
 local function AutoStoreFruits()
     if not Config.AutoStoreFruit then return end
     pcall(function()
@@ -227,8 +251,7 @@ local function AutoStoreFruits()
             if container then
                 for _, item in ipairs(container:GetChildren()) do
                     if item:IsA("Tool") and string.find(item.Name, "Fruit") then
-                        local fruitCode = item:GetAttribute("OriginalName") or item.Name
-                        CommF:InvokeServer("StoreFruit", fruitCode, item)
+                        CommF:InvokeServer("StoreFruit", item:GetAttribute("OriginalName") or item.Name, item)
                     end
                 end
             end
@@ -247,21 +270,20 @@ local function CheckAndCollectFruit()
     return false
 end
 
--- 8. Bảng hành động FSM
+-- 9. FSM State Actions
 local Actions = {
     IDLE = function()
         if GetCurrentSeaKey() ~= "Sea1" then
-            SetUI("NOT IN SEA 1 (Teleporting...)")
-            pcall(function()
-                ReplicatedStorage.Remotes.CommF_:InvokeServer("TravelMain")
-            end)
+            SetUI("TELEPORTING TO SEA 1...")
+            pcall(function() ReplicatedStorage.Remotes.CommF_:InvokeServer("TravelMain") end)
             task.wait(3)
             return
         end
 
         if HandleSea1Progression() then return end
 
-        if Config.AutoRandomFruit and (tick() - FSM.LastRandomTick > 120) then
+        -- Kiểm tra random trái định kỳ
+        if Config.AutoRandomFruit and (tick() - FSM.LastRandomTick > 156) then
             local beli = 0
             pcall(function() beli = LocalPlayer.Data.Beli.Value end)
             if beli >= (Config.MinBeliToRandom or 500000) then
@@ -279,10 +301,8 @@ local Actions = {
 
     RANDOM_FRUIT = function()
         FSM.LastRandomTick = tick()
-        pcall(function()
-            ReplicatedStorage.Remotes.CommF_:InvokeServer("Cousin", "Buy")
-        end)
-        task.wait(1)
+        pcall(function() ReplicatedStorage.Remotes.CommF_:InvokeServer("Cousin", "Buy") end)
+        task.wait(1.5)
         ChangeState("IDLE", "IDLE")
     end,
 
@@ -294,18 +314,12 @@ local Actions = {
         end
 
         local q = GetCurrentQuest()
-        if not q then
-            SetUI("NO QUEST DATA")
-            task.wait(2)
-            return
-        end
+        if not q then SetUI("NO QUEST DATA"); task.wait(2); return end
 
         SetUI("FLY TO NPC: " .. q.Mob)
         if StableFlyTo(q.NPCCFrame) then
-            pcall(function()
-                ReplicatedStorage.Remotes.CommF_:InvokeServer("StartQuest", q.QuestName, q.QuestLv)
-            end)
-            task.wait(0.8)
+            pcall(function() ReplicatedStorage.Remotes.CommF_:InvokeServer("StartQuest", q.QuestName, q.QuestLv) end)
+            task.wait(0.5)
             ChangeState("FARM_MOB", "FARMING: " .. q.Mob)
         end
     end,
@@ -332,16 +346,10 @@ local Actions = {
         end
 
         if targetMob then
-            SetUI("KILLING: " .. q.Mob)
-            AutoEquipWeapon()
-            local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-            if hrp then
-                hrp.CFrame = targetMob.HumanoidRootPart.CFrame * CFrame.new(0, 12, 0)
-                VirtualUser:CaptureController()
-                VirtualUser:Button1Down(Vector2.new(1280, 672))
-            end
+            SetUI("KILLING MOB: " .. q.Mob)
+            AttackTarget(targetMob)
         else
-            SetUI("WAITING MOB: " .. q.Mob)
+            SetUI("WAITING SPAWN: " .. q.Mob)
             StableFlyTo(q.MobCFrame)
         end
     end,
@@ -375,17 +383,14 @@ local Actions = {
         local boss = workspace:FindFirstChild("Enemies") and workspace.Enemies:FindFirstChild("Ice Admiral")
         if boss and boss:FindFirstChild("Humanoid") and boss.Humanoid.Health > 0 then
             SetUI("KILLING: Ice Admiral")
-            AutoEquipWeapon()
-            LocalPlayer.Character.HumanoidRootPart.CFrame = boss.HumanoidRootPart.CFrame * CFrame.new(0, 12, 0)
-            VirtualUser:CaptureController()
-            VirtualUser:Button1Down(Vector2.new(1280, 672))
+            AttackTarget(boss)
         else
             StableFlyTo(CFrame.new(1347, 37, -1325))
         end
     end
 }
 
--- 9. Vòng lặp trung tâm
+-- 10. Vòng Lặp Điều Phối Chính (Chống Crash)
 task.spawn(function()
     while true do
         if FSM.Running then
@@ -396,8 +401,8 @@ task.spawn(function()
                 if action then
                     local ok, err = pcall(action)
                     if not ok then
-                        warn("[FSM ERROR]:", err)
-                        SetUI("ERR: Check F9")
+                        warn("[FSM CRITICAL ERROR]:", err)
+                        SetUI("CRITICAL ERR")
                     end
                 else
                     FSM.State = "IDLE"
