@@ -1,4 +1,4 @@
--- Tệp: fsm.lua (Tối ưu hóa chiến đấu dứt điểm Sea 1)
+-- Tệp: fsm.lua (Tích hợp Fast Attack [27] & Khóa vận tốc [19] trích xuất từ file Kaitun)
 local HttpService = game:GetService("HttpService")
 local TweenService = game:GetService("TweenService")
 local RunService = game:GetService("RunService")
@@ -13,12 +13,120 @@ local CACHE_BUST = "?t=" .. tostring(os.time())
 local FSM = {
     State = "IDLE",
     Running = true,
-    ActiveTween = nil
+    ActiveTween = nil,
+    LastRandomTick = 0
 }
 
 local Sea1Bought = { Geppo = false, Buso = false, Soru = false, BlackLeg = false }
 
--- 1. Nạp Cấu Hình và Giao Diện
+-- ==========================================
+-- 1. MODULE FAST ATTACK (Trích xuất từ khóa [27])
+-- ==========================================
+local Net = ReplicatedStorage:WaitForChild("Modules"):WaitForChild("Net")
+local HitParts = {
+    "RightLowerArm", "RightUpperArm", "LeftLowerArm", "LeftUpperArm",
+    "RightHand", "LeftHand", "HumanoidRootPart", "Head"
+}
+
+local DynamicHitRemote, DynamicHitId = nil, nil
+pcall(function()
+    local folders = {
+        ReplicatedStorage:FindFirstChild("Util"),
+        ReplicatedStorage:FindFirstChild("Common"),
+        ReplicatedStorage:FindFirstChild("Remotes"),
+        ReplicatedStorage:FindFirstChild("Assets"),
+        ReplicatedStorage:FindFirstChild("FX")
+    }
+    for _, folder in ipairs(folders) do
+        if folder then
+            local function checkObj(obj)
+                if obj:IsA("RemoteEvent") and obj:GetAttribute("Id") then
+                    DynamicHitRemote = obj
+                    DynamicHitId = obj:GetAttribute("Id")
+                end
+            end
+            for _, child in ipairs(folder:GetChildren()) do checkObj(child) end
+            folder.ChildAdded:Connect(checkObj)
+        end
+    end
+end)
+
+local function GetNearbyBladeHits(radius)
+    local hits = {}
+    local char = LocalPlayer.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    if not hrp then return hits end
+
+    local containers = {
+        workspace:FindFirstChild("Enemies"),
+        workspace:FindFirstChild("Characters")
+    }
+
+    for _, folder in ipairs(containers) do
+        if folder then
+            for _, mob in ipairs(folder:GetChildren()) do
+                if mob ~= char then
+                    local hum = mob:FindFirstChild("Humanoid")
+                    local mobHrp = mob:FindFirstChild("HumanoidRootPart")
+                    if hum and mobHrp and hum.Health > 0 and (mobHrp.Position - hrp.Position).Magnitude <= (radius or 60) then
+                        local chosenPart = mob:FindFirstChild(HitParts[math.random(1, #HitParts)]) or mob.PrimaryPart or mobHrp
+                        if chosenPart then
+                            -- Gom quái lại gần để đánh lan
+                            pcall(function()
+                                mobHrp.CanCollide = false
+                                mobHrp.Size = Vector3.new(50, 50, 50)
+                            end)
+                            table.insert(hits, { mob, chosenPart })
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return hits
+end
+
+local function ExecuteFastAttack()
+    local char = LocalPlayer.Character
+    if not char or not char:FindFirstChildOfClass("Tool") then return end
+
+    local bladeHits = GetNearbyBladeHits(60)
+    if #bladeHits == 0 then return end
+
+    local mainPart = bladeHits[1][2]
+
+    -- Phương thức 1: Gửi cặp lệnh chuẩn RE/RegisterAttack + RE/RegisterHit
+    pcall(function()
+        Net["RE/RegisterAttack"]:FireServer(0.05)
+        Net["RE/RegisterHit"]:FireServer(mainPart, bladeHits)
+    end)
+
+    -- Phương thức 2: Gửi kèm gói tin giải mã XOR nếu server bật Anti-Cheat Remote Id
+    pcall(function()
+        if DynamicHitRemote and DynamicHitId and Net:FindFirstChild("seed") then
+            local seedVal = Net.seed:InvokeServer()
+            local timeKey = math.floor(workspace:GetServerTimeNow() / 10 % 10) + 1
+            local encodedName = string.gsub("RE/RegisterHit", ".", function(c)
+                return string.char(bit32.bxor(string.byte(c), timeKey))
+            end)
+            local ref = (cloneref and cloneref(DynamicHitRemote)) or DynamicHitRemote
+            ref:FireServer(encodedName, bit32.bxor(DynamicHitId + 909090, seedVal * 2), mainPart, bladeHits)
+        end
+    end)
+end
+
+-- Chạy luồng Fast Attack liên tục độc lập (chu kỳ 0.05s chuẩn từ khóa [27])
+task.spawn(function()
+    while task.wait(0.05) do
+        if FSM.Running and FSM.State == "FARM_MOB" then
+            pcall(ExecuteFastAttack)
+        end
+    end
+end)
+
+-- ==========================================
+-- 2. NẠP CẤU HÌNH & GIAO DIỆN
+-- ==========================================
 local function LoadJSON(fileName)
     local ok, raw = pcall(function() return game:HttpGet(BASE_URL .. fileName .. CACHE_BUST) end)
     if not ok then return nil end
@@ -26,7 +134,7 @@ local function LoadJSON(fileName)
     return ok2 and data or nil
 end
 
-local Config = LoadJSON("config.json") or { FlySpeed = 220, WeaponType = "Melee", AutoStoreFruit = true }
+local Config = LoadJSON("config.json") or { FlySpeed = 200, WeaponType = "Melee", AutoStoreFruit = true }
 local QuestsData = LoadJSON("quests.json")
 
 local okUI, UIModule = pcall(function()
@@ -35,7 +143,7 @@ end)
 
 local Dashboard = nil
 if okUI and UIModule then
-    Dashboard = UIModule.CreateDashboard("⚡ KAITUN ULTIMATE FARM", function(isRunning)
+    Dashboard = UIModule.CreateDashboard("⚡ KAITUN SEA 1 PRO", function(isRunning)
         FSM.Running = isRunning
         if not isRunning and FSM.ActiveTween then
             FSM.ActiveTween:Cancel()
@@ -52,23 +160,32 @@ local function ChangeState(newState, detailText)
     SetUI(detailText or newState)
 end
 
--- 2. Chống va chạm & Chống AFK
-RunService.Stepped:Connect(function()
+-- ==========================================
+-- 3. KHÓA VẬN TỐC KHÔNG DÙNG BODYVELOCITY (Từ khóa [19])
+-- ==========================================
+RunService.Heartbeat:Connect(function()
     if not FSM.Running then return end
     local char = LocalPlayer.Character
     if not char then return end
 
     for _, part in ipairs(char:GetDescendants()) do
-        if part:IsA("BasePart") and part.CanCollide and part.Name ~= "HumanoidRootPart" then
+        if part:IsA("BasePart") then
             part.CanCollide = false
+            part.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+            part.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
         end
     end
-
-    VirtualUser:CaptureController()
-    VirtualUser:Button2Down(Vector2.new(999, 999))
 end)
 
--- 3. Hàm Bay Mượt Mà
+-- Chống AFK
+LocalPlayer.Idled:Connect(function()
+    VirtualUser:CaptureController()
+    VirtualUser:ClickButton2(Vector2.new())
+end)
+
+-- ==========================================
+-- 4. HÀM BAY & TRANG BỊ VŨ KHÍ
+-- ==========================================
 local function StableFlyTo(targetCF)
     local char = LocalPlayer.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
@@ -81,7 +198,7 @@ local function StableFlyTo(targetCF)
     end
 
     if FSM.ActiveTween then FSM.ActiveTween:Cancel() end
-    local speed = Config.FlySpeed or 220
+    local speed = Config.FlySpeed or 200
     local duration = dist / speed
 
     local tween = TweenService:Create(hrp, TweenInfo.new(duration, Enum.EasingStyle.Linear), {CFrame = targetCF})
@@ -99,28 +216,36 @@ local function StableFlyTo(targetCF)
             hrp.CFrame = targetCF
             return true
         end
-        task.wait(0.1)
+        task.wait(0.05)
     end
     return true
 end
 
--- 4. Tự Động Trang Bị Vũ Khí
 local function AutoEquipWeapon()
     local char = LocalPlayer.Character
     local hum = char and char:FindFirstChildOfClass("Humanoid")
     if not hum then return end
 
     local targetType = Config.WeaponType or "Melee"
+    local equipped = char:FindFirstChildOfClass("Tool")
+    if equipped and (equipped.ToolTip == targetType or equipped:GetAttribute("WeaponType") == targetType) then
+        return
+    end
+
     for _, tool in ipairs(LocalPlayer.Backpack:GetChildren()) do
-        if tool:IsA("Tool") then
+        if tool:IsA("Tool") and (tool.ToolTip == targetType or tool:GetAttribute("WeaponType") == targetType) then
             hum:EquipTool(tool)
-            return tool
+            return
         end
     end
-    return char:FindFirstChildOfClass("Tool")
+
+    local firstTool = LocalPlayer.Backpack:FindFirstChildOfClass("Tool")
+    if firstTool then hum:EquipTool(firstTool) end
 end
 
--- 5. Lấy Quest Theo Level
+-- ==========================================
+-- 5. NHIỆM VỤ & TIẾN TRÌNH SEA 1
+-- ==========================================
 local function GetCurrentQuest()
     if not QuestsData or not QuestsData.Sea1 then return nil end
     local level = 1
@@ -136,9 +261,9 @@ local function GetCurrentQuest()
         QuestName = bestQuest.QuestName,
         QuestLv = bestQuest.QuestLv,
         Mob = bestQuest.Mob,
-        NPCCFrame = CFrame.new(bestQuest.NPC[1], bestQuest.NPC[2] + 4, bestQuest.NPC[3]),
-        MobCFrame = bestQuest.MobPos and CFrame.new(bestQuest.MobPos[1], bestQuest.MobPos[2] + 5, bestQuest.MobPos[3])
-                    or CFrame.new(bestQuest.NPC[1], bestQuest.NPC[2] + 10, bestQuest.NPC[3])
+        NPCCFrame = CFrame.new(bestQuest.NPC[1], bestQuest.NPC[2] + 3, bestQuest.NPC[3]),
+        MobCFrame = bestQuest.MobPos and CFrame.new(bestQuest.MobPos[1], bestQuest.MobPos[2] + 12, bestQuest.MobPos[3])
+                    or CFrame.new(bestQuest.NPC[1], bestQuest.NPC[2] + 15, bestQuest.NPC[3])
     }
 end
 
@@ -149,10 +274,11 @@ local function HasActiveQuest()
     return ok and visible or false
 end
 
--- 6. Tự Động Hóa Tiến Trình Sea 1
 local function HandleSea1Progression()
     local CommF = ReplicatedStorage.Remotes.CommF_
-    pcall(function() CommF:InvokeServer("SetTeam", "Pirates") end)
+    if LocalPlayer.Team == nil then
+        pcall(function() CommF:InvokeServer("SetTeam", "Pirates") end)
+    end
 
     local level = LocalPlayer.Data.Level.Value
     local beli = LocalPlayer.Data.Beli.Value
@@ -176,53 +302,15 @@ local function HandleSea1Progression()
         if beli >= 100000 and not Sea1Bought.Soru then CommF:InvokeServer("BuyHaki", "Soru"); Sea1Bought.Soru = true end
     end)
 
-    if level >= 700 then
-        ChangeState("SEA2_QUEST", "UNLOCKING SEA 2")
-        return true
-    end
     return false
 end
 
--- 7. Quản Lý Trái Ác Quỷ
-local function AutoStoreFruits()
-    if not Config.AutoStoreFruit then return end
-    pcall(function()
-        local CommF = ReplicatedStorage.Remotes.CommF_
-        for _, container in ipairs({ LocalPlayer.Backpack, LocalPlayer.Character }) do
-            if container then
-                for _, item in ipairs(container:GetChildren()) do
-                    if item:IsA("Tool") and string.find(item.Name, "Fruit") then
-                        CommF:InvokeServer("StoreFruit", item:GetAttribute("OriginalName") or item.Name, item)
-                    end
-                end
-            end
-        end
-    end)
-end
-
-local function CheckAndCollectFruit()
-    for _, obj in ipairs(workspace:GetChildren()) do
-        if obj:IsA("Tool") and string.find(obj.Name, "Fruit") and obj:FindFirstChild("Handle") then
-            SetUI("COLLECTING: " .. obj.Name)
-            StableFlyTo(obj.Handle.CFrame)
-            return true
-        end
-    end
-    return false
-end
-
--- 8. FSM Actions (Fix Triệt ĐT Lỗi Đánh Quái)
+-- ==========================================
+-- 6. BẢNG TRẠNG THÁI FSM
+-- ==========================================
 local Actions = {
     IDLE = function()
-        if game.PlaceId ~= 2753915549 then
-            SetUI("TELEPORTING TO SEA 1...")
-            pcall(function() ReplicatedStorage.Remotes.CommF_:InvokeServer("TravelMain") end)
-            task.wait(3)
-            return
-        end
-
-        if HandleSea1Progression() then return end
-
+        HandleSea1Progression()
         if HasActiveQuest() then
             ChangeState("FARM_MOB", "FARMING")
         else
@@ -241,7 +329,9 @@ local Actions = {
 
         SetUI("FLY TO NPC: " .. q.Mob)
         if StableFlyTo(q.NPCCFrame) then
-            pcall(function() ReplicatedStorage.Remotes.CommF_:InvokeServer("StartQuest", q.QuestName, q.QuestLv) end)
+            pcall(function()
+                ReplicatedStorage.Remotes.CommF_:InvokeServer("StartQuest", q.QuestName, q.QuestLv)
+            end)
             task.wait(0.5)
             ChangeState("FARM_MOB", "FARMING: " .. q.Mob)
         end
@@ -256,79 +346,48 @@ local Actions = {
         local q = GetCurrentQuest()
         if not q then return end
 
-        -- Tìm quái gần nhất bất kể sai lệch ký tự tên nhỏ
         local targetMob = nil
-        local shortestDist = 9e9
         if workspace:FindFirstChild("Enemies") then
-            local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
             for _, mob in ipairs(workspace.Enemies:GetChildren()) do
                 if mob:FindFirstChild("Humanoid") and mob:FindFirstChild("HumanoidRootPart") and mob.Humanoid.Health > 0 then
-                    if hrp then
-                        local dist = (mob.HumanoidRootPart.Position - hrp.Position).Magnitude
-                        if dist < shortestDist then
-                            shortestDist = dist
-                            targetMob = mob
-                        end
+                    if string.find(mob.Name, q.Mob) then
+                        targetMob = mob
+                        break
                     end
                 end
             end
         end
 
         if targetMob and targetMob:FindFirstChild("HumanoidRootPart") then
-            SetUI("FARMING: " .. (targetMob.Name or q.Mob))
+            SetUI("KILLING: " .. q.Mob)
             AutoEquipWeapon()
-            
             local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
             if hrp then
-                -- Ghim sát đầu quái và luôn hướng mặt về phía quái
-                hrp.CFrame = targetMob.HumanoidRootPart.CFrame * CFrame.new(0, 4, 1)
-                
-                -- Kích hoạt đòn tấn công liên tục qua VirtualUser và Tool
-                pcall(function()
-                    VirtualUser:CaptureController()
-                    VirtualUser:Button1Down(Vector2.new(1280, 672))
-                end)
-
-                local tool = LocalPlayer.Character:FindFirstChildOfClass("Tool")
-                if tool then
-                    pcall(function() tool:Activate() end)
-                end
-
-                -- Kích hoạt Remote chuẩn của game nếu có
-                pcall(function()
-                    local Net = ReplicatedStorage:FindFirstChild("Modules") and ReplicatedStorage.Modules:FindFirstChild("Net")
-                    if Net and Net:FindFirstChild("RE/RegisterAttack") then
-                        Net.RE.RegisterAttack:FireServer(targetMob.HumanoidRootPart.CFrame)
-                    end
-                end)
+                -- Đứng cách đầu quái 12 studs (trong tầm 60 studs của Fast Attack [27])
+                hrp.CFrame = targetMob.HumanoidRootPart.CFrame * CFrame.new(0, 12, 0)
             end
         else
-            SetUI("FLY TO SPAWN: " .. q.Mob)
+            SetUI("WAITING MOB: " .. q.Mob)
             StableFlyTo(q.MobCFrame)
         end
     end
 }
 
--- 9. Vòng Lặp Chính
+-- ==========================================
+-- 7. VÒNG LẶP ĐIỀU PHỐI
+-- ==========================================
 task.spawn(function()
-    while true do
+    while task.wait(0.15) do
         if FSM.Running then
-            pcall(AutoStoreFruits)
-            local foundFruit = CheckAndCollectFruit()
-            if not foundFruit then
-                local action = Actions[FSM.State]
-                if action then
-                    local ok, err = pcall(action)
-                    if not ok then
-                        warn("[FSM ERROR]:", err)
-                        SetUI("ERROR RECOVERY")
-                        task.wait(1)
-                    end
-                else
-                    FSM.State = "IDLE"
+            local action = Actions[FSM.State]
+            if action then
+                local ok, err = pcall(action)
+                if not ok then
+                    warn("[FSM ERROR]:", err)
                 end
+            else
+                FSM.State = "IDLE"
             end
         end
-        task.wait(0.1)
     end
 end)
