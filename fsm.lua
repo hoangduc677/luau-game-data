@@ -1,4 +1,4 @@
--- Tệp: fsm.lua (Hoàn chỉnh: Nhận Quest -> Bay tới bãi quái -> Đánh quái trực tiếp)
+-- Tệp: fsm.lua (Fix dứt điểm lỗi đánh quái và bay sát quái)
 local HttpService = game:GetService("HttpService")
 local TweenService = game:GetService("TweenService")
 local RunService = game:GetService("RunService")
@@ -13,8 +13,7 @@ local CACHE_BUST = "?t=" .. tostring(os.time())
 local FSM = {
     State = "IDLE",
     Running = true,
-    ActiveTween = nil,
-    LastRandomTick = 0
+    ActiveTween = nil
 }
 
 local Sea1Bought = { Geppo = false, Buso = false, Soru = false, BlackLeg = false }
@@ -31,12 +30,12 @@ local Config = LoadJSON("config.json") or { FlySpeed = 220, WeaponType = "Melee"
 local QuestsData = LoadJSON("quests.json")
 
 local okUI, UIModule = pcall(function()
-    return loadstring(game:HttpGet(BASE_URL .. "ui.lua" .. CACHE_BUST))()
+    return loadstring(game:HttpGet(BASE_URL + "ui.lua" .. CACHE_BUST))()
 end)
 
 local Dashboard = nil
 if okUI and UIModule then
-    Dashboard = UIModule.CreateDashboard("⚡ KAITUN SEA 1 FARM", function(isRunning)
+    Dashboard = UIModule.CreateDashboard("⚡ KAITUN COMBAT FIX", function(isRunning)
         FSM.Running = isRunning
         if not isRunning and FSM.ActiveTween then
             FSM.ActiveTween:Cancel()
@@ -53,7 +52,7 @@ local function ChangeState(newState, detailText)
     SetUI(detailText or newState)
 end
 
--- 2. Chống văng, Chống AFK & Khóa Vận Tốc Bay (Bỏ BodyVelocity để không bị giữ cứng)
+-- 2. Chống va chạm & Chống AFK
 RunService.Stepped:Connect(function()
     if not FSM.Running then return end
     local char = LocalPlayer.Character
@@ -65,19 +64,18 @@ RunService.Stepped:Connect(function()
         end
     end
 
-    -- Chống AFK
     VirtualUser:CaptureController()
     VirtualUser:Button2Down(Vector2.new(999, 999))
 end)
 
--- 3. Hàm Bay Mượt Mà Tới Đích
+-- 3. Hàm Bay Mượt Mà
 local function StableFlyTo(targetCF)
     local char = LocalPlayer.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
     if not hrp then return false end
 
     local dist = (hrp.Position - targetCF.Position).Magnitude
-    if dist <= 15 then
+    if dist <= 12 then
         hrp.CFrame = targetCF
         return true
     end
@@ -96,7 +94,7 @@ local function StableFlyTo(targetCF)
             tween:Cancel()
             return false
         end
-        if (hrp.Position - targetCF.Position).Magnitude <= 15 then
+        if (hrp.Position - targetCF.Position).Magnitude <= 12 then
             tween:Cancel()
             hrp.CFrame = targetCF
             return true
@@ -106,22 +104,37 @@ local function StableFlyTo(targetCF)
     return true
 end
 
--- 4. Tự Động Cầm Vũ Khí
+-- 4. Tự Động Trang Bị Vũ Khí Chuẩn Xác
 local function AutoEquipWeapon()
     local char = LocalPlayer.Character
     local hum = char and char:FindFirstChildOfClass("Humanoid")
     if not hum then return end
 
     local targetType = Config.WeaponType or "Melee"
+    -- Kiểm tra xem trên tay đã cầm đúng loại vũ khí chưa
+    local currentTool = char:FindFirstChildOfClass("Tool")
+    if currentTool and currentTool.ToolTip == targetType then
+        return currentTool
+    end
+
+    -- Nếu chưa, tìm trong Backpack và trang bị
     for _, tool in ipairs(LocalPlayer.Backpack:GetChildren()) do
         if tool:IsA("Tool") and tool.ToolTip == targetType then
             hum:EquipTool(tool)
-            break
+            return tool
         end
     end
+    
+    -- Nếu không tìm thấy theo ToolTip, lấy bất kỳ Tool nào có sẵn
+    local fallbackTool = LocalPlayer.Backpack:FindFirstChildOfClass("Tool")
+    if fallbackTool then
+        hum:EquipTool(fallbackTool)
+        return fallbackTool
+    end
+    return nil
 end
 
--- 5. Lấy Quest Chuẩn Theo Level
+-- 5. Lấy Quest Theo Level
 local function GetCurrentQuest()
     if not QuestsData or not QuestsData.Sea1 then return nil end
     local level = 1
@@ -138,8 +151,8 @@ local function GetCurrentQuest()
         QuestLv = bestQuest.QuestLv,
         Mob = bestQuest.Mob,
         NPCCFrame = CFrame.new(bestQuest.NPC[1], bestQuest.NPC[2] + 4, bestQuest.NPC[3]),
-        MobCFrame = bestQuest.MobPos and CFrame.new(bestQuest.MobPos[1], bestQuest.MobPos[2] + 10, bestQuest.MobPos[3])
-                    or CFrame.new(bestQuest.NPC[1], bestQuest.NPC[2] + 20, bestQuest.NPC[3])
+        MobCFrame = bestQuest.MobPos and CFrame.new(bestQuest.MobPos[1], bestQuest.MobPos[2] + 5, bestQuest.MobPos[3])
+                    or CFrame.new(bestQuest.NPC[1], bestQuest.NPC[2] + 10, bestQuest.NPC[3])
     }
 end
 
@@ -212,7 +225,7 @@ local function CheckAndCollectFruit()
     return false
 end
 
--- 8. FSM Actions
+-- 8. FSM Actions (Tối ưu hóa hành vi đánh quái trực tiếp)
 local Actions = {
     IDLE = function()
         if game.PlaceId ~= 2753915549 then
@@ -269,17 +282,32 @@ local Actions = {
             end
         end
 
-        if targetMob then
-            SetUI("FARMING: " .. q.Mob)
+        if targetMob and targetMob:FindFirstChild("HumanoidRootPart") then
+            SetUI("ATTACKING: " .. q.Mob)
             AutoEquipWeapon()
+            
             local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-            if hrp and targetMob:FindFirstChild("HumanoidRootPart") then
-                hrp.CFrame = targetMob.HumanoidRootPart.CFrame * CFrame.new(0, 10, 0)
-                local tool = LocalPlayer.Character:FindFirstChildOfClass("Tool") or LocalPlayer.Backpack:FindFirstChildOfClass("Tool")
-                if tool then tool:Activate() end
+            if hrp then
+                -- Ghim sát ngay đầu/lưng quái (cách 4 studs thay vì treo cao 10 studs)
+                hrp.CFrame = targetMob.HumanoidRootPart.CFrame * CFrame.new(0, 4, 2)
+                
+                -- Giả lập bấm chuột trái liên tục để chém quái
+                pcall(function()
+                    VirtualUser:CaptureController()
+                    VirtualUser:Button1Down(Vector2.new(1280, 672))
+                end)
+
+                -- Kích hoạt Remote tấn công nếu game hỗ trợ
+                pcall(function()
+                    local Net = ReplicatedStorage:FindFirstChild("Modules") and ReplicatedStorage.Modules:FindFirstChild("Net")
+                    if Net then
+                        local regAttack = Net:FindFirstChild("RE/RegisterAttack")
+                        if regAttack then regAttack:FireServer() end
+                    end
+                end)
             end
         else
-            SetUI("FLY TO MOB SPOT")
+            SetUI("FLY TO SPAWN: " .. q.Mob)
             StableFlyTo(q.MobCFrame)
         end
     end
@@ -305,6 +333,6 @@ task.spawn(function()
                 end
             end
         end
-        task.wait(0.2)
+        task.wait(0.15)
     end
 end)
