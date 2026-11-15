@@ -1,4 +1,4 @@
--- Tệp: fsm.lua (Hệ thống Kaitun Sea 1 Siêu Ổn Định)
+-- Tệp: fsm.lua (Hoàn chỉnh: Nhận Quest -> Bay tới bãi quái -> Đánh quái trực tiếp)
 local HttpService = game:GetService("HttpService")
 local TweenService = game:GetService("TweenService")
 local RunService = game:GetService("RunService")
@@ -14,8 +14,7 @@ local FSM = {
     State = "IDLE",
     Running = true,
     ActiveTween = nil,
-    LastRandomTick = 0,
-    LastAttackTick = 0
+    LastRandomTick = 0
 }
 
 local Sea1Bought = { Geppo = false, Buso = false, Soru = false, BlackLeg = false }
@@ -28,7 +27,7 @@ local function LoadJSON(fileName)
     return ok2 and data or nil
 end
 
-local Config = LoadJSON("config.json") or { FlySpeed = 180, WeaponType = "Melee", AutoFarm = true, AutoStoreFruit = true }
+local Config = LoadJSON("config.json") or { FlySpeed = 220, WeaponType = "Melee", AutoStoreFruit = true }
 local QuestsData = LoadJSON("quests.json")
 
 local okUI, UIModule = pcall(function()
@@ -37,7 +36,7 @@ end)
 
 local Dashboard = nil
 if okUI and UIModule then
-    Dashboard = UIModule.CreateDashboard("⚡ KAITUN SEA 1 STABLE", function(isRunning)
+    Dashboard = UIModule.CreateDashboard("⚡ KAITUN SEA 1 FARM", function(isRunning)
         FSM.Running = isRunning
         if not isRunning and FSM.ActiveTween then
             FSM.ActiveTween:Cancel()
@@ -54,36 +53,24 @@ local function ChangeState(newState, detailText)
     SetUI(detailText or newState)
 end
 
--- 2. Chống văng, Chống AFK & Khóa Vận Tốc Bay
+-- 2. Chống văng, Chống AFK & Khóa Vận Tốc Bay (Bỏ BodyVelocity để không bị giữ cứng)
 RunService.Stepped:Connect(function()
     if not FSM.Running then return end
     local char = LocalPlayer.Character
     if not char then return end
 
-    -- Vô hiệu hóa va chạm để chống kẹt gây crash
     for _, part in ipairs(char:GetDescendants()) do
         if part:IsA("BasePart") and part.CanCollide and part.Name ~= "HumanoidRootPart" then
             part.CanCollide = false
         end
     end
 
-    local hrp = char:FindFirstChild("HumanoidRootPart")
-    if hrp then
-        -- Giữ lơ lửng, triệt tiêu trọng lực để bay cực mượt
-        if not hrp:FindFirstChild("StabilityBV") then
-            local bv = Instance.new("BodyVelocity")
-            bv.Name = "StabilityBV"
-            bv.Velocity = Vector3.new(0, 0, 0)
-            bv.MaxForce = Vector3.new(9e9, 9e9, 9e9)
-            bv.Parent = hrp
-        end
-        -- Chống AFK bằng cách liên tục gửi tín hiệu hoạt động
-        VirtualUser:CaptureController()
-        VirtualUser:Button2Down(Vector2.new(999, 999))
-    end
+    -- Chống AFK
+    VirtualUser:CaptureController()
+    VirtualUser:Button2Down(Vector2.new(999, 999))
 end)
 
--- 3. Hàm Bay Ổn Định (Không bị Teleport Check)
+-- 3. Hàm Bay Mượt Mà Tới Đích
 local function StableFlyTo(targetCF)
     local char = LocalPlayer.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
@@ -96,7 +83,7 @@ local function StableFlyTo(targetCF)
     end
 
     if FSM.ActiveTween then FSM.ActiveTween:Cancel() end
-    local speed = Config.FlySpeed or 180
+    local speed = Config.FlySpeed or 220
     local duration = dist / speed
 
     local tween = TweenService:Create(hrp, TweenInfo.new(duration, Enum.EasingStyle.Linear), {CFrame = targetCF})
@@ -119,7 +106,7 @@ local function StableFlyTo(targetCF)
     return true
 end
 
--- 4. Tự Động Cầm Vũ Khí Cày Thuê
+-- 4. Tự Động Cầm Vũ Khí
 local function AutoEquipWeapon()
     local char = LocalPlayer.Character
     local hum = char and char:FindFirstChildOfClass("Humanoid")
@@ -134,23 +121,13 @@ local function AutoEquipWeapon()
     end
 end
 
--- 5. Xác Định Sea và Lấy Dữ Liệu Quest
-local function GetCurrentSeaKey()
-    local placeId = game.PlaceId
-    if placeId == 2753915549 then return "Sea1"
-    elseif placeId == 4442272183 then return "Sea2"
-    else return "Sea3" end
-end
-
+-- 5. Lấy Quest Chuẩn Theo Level
 local function GetCurrentQuest()
-    if not QuestsData then return nil end
-    local seaKey = GetCurrentSeaKey()
-    local questList = QuestsData[seaKey]
-    if not questList or #questList == 0 then return nil end
-
+    if not QuestsData or not QuestsData.Sea1 then return nil end
     local level = 1
     pcall(function() level = LocalPlayer.Data.Level.Value end)
 
+    local questList = QuestsData.Sea1
     local bestQuest = questList[1]
     for _, q in ipairs(questList) do
         if level >= q.MinLv then bestQuest = q end
@@ -158,10 +135,10 @@ local function GetCurrentQuest()
 
     return {
         QuestName = bestQuest.QuestName,
-        QuestLv = q.QuestLv,
+        QuestLv = bestQuest.QuestLv,
         Mob = bestQuest.Mob,
         NPCCFrame = CFrame.new(bestQuest.NPC[1], bestQuest.NPC[2] + 4, bestQuest.NPC[3]),
-        MobCFrame = bestQuest.MobPos and CFrame.new(bestQuest.MobPos[1], bestQuest.MobPos[2] + 12, bestQuest.MobPos[3])
+        MobCFrame = bestQuest.MobPos and CFrame.new(bestQuest.MobPos[1], bestQuest.MobPos[2] + 10, bestQuest.MobPos[3])
                     or CFrame.new(bestQuest.NPC[1], bestQuest.NPC[2] + 20, bestQuest.NPC[3])
     }
 end
@@ -173,47 +150,15 @@ local function HasActiveQuest()
     return ok and visible or false
 end
 
--- 6. Hệ Thống Combat Trực Tiếp (Thay Thế VirtualUser)
-local function AttackTarget(targetMob)
-    AutoEquipWeapon()
-    local char = LocalPlayer.Character
-    local hrp = char and char:FindFirstChild("HumanoidRootPart")
-    local enemyHrp = targetMob:FindFirstChild("HumanoidRootPart")
-    if not hrp or not enemyHrp then return end
-
-    -- Khóa vị trí ngay trên đầu quái để tung chiêu
-    hrp.CFrame = enemyHrp.CFrame * CFrame.new(0, 10, 0)
-
-    -- Kích hoạt đòn đánh liên tục thông qua Tool hoặc Remote
-    local tool = char:FindFirstChildOfClass("Tool") or LocalPlayer.Backpack:FindFirstChildOfClass("Tool")
-    if tool then
-        tool:Activate()
-    end
-
-    pcall(function()
-        local Net = ReplicatedStorage:FindFirstChild("Modules"):FindFirstChild("Net")
-        if Net then
-            local attackRemote = Net:FindFirstChild("RE/RegisterAttack") or Net:FindFirstChild("RE/RegisterHit")
-            if attackRemote then
-                attackRemote:FireServer(CFrame.new())
-            end
-        end
-    end)
-end
-
--- 7. Logic Tiến Trình Sea 1 (Tự động hóa toàn diện)
+-- 6. Tự Động Hóa Tiến Trình Sea 1
 local function HandleSea1Progression()
-    if GetCurrentSeaKey() ~= "Sea1" then return false end
-
     local CommF = ReplicatedStorage.Remotes.CommF_
+    pcall(function() CommF:InvokeServer("SetTeam", "Pirates") end)
+
     local level = LocalPlayer.Data.Level.Value
     local beli = LocalPlayer.Data.Beli.Value
     local points = LocalPlayer.Data.Points.Value
 
-    -- Tự động chọn phe Hải Tặc khi vào game
-    pcall(function() CommF:InvokeServer("SetTeam", "Pirates") end)
-
-    -- Tự động cộng điểm tối ưu dame
     if points > 0 then
         pcall(function()
             CommF:InvokeServer("AddPoint", "Melee", math.ceil(points * 0.7))
@@ -221,12 +166,10 @@ local function HandleSea1Progression()
         end)
     end
 
-    -- Duy trì trạng thái Haki
     if LocalPlayer.Character and not LocalPlayer.Character:FindFirstChild("HasBuso") then
         pcall(function() CommF:InvokeServer("Buso") end)
     end
 
-    -- Mua kỹ năng tiến cấp
     pcall(function()
         if beli >= 10000 and not Sea1Bought.Geppo then CommF:InvokeServer("BuyHaki", "Geppo"); Sea1Bought.Geppo = true end
         if beli >= 25000 and not Sea1Bought.Buso then CommF:InvokeServer("BuyHaki", "Buso"); Sea1Bought.Buso = true end
@@ -241,13 +184,12 @@ local function HandleSea1Progression()
     return false
 end
 
--- 8. Quản Lý Trái Ác Quỷ An Toàn
+-- 7. Quản Lý Trái Ác Quỷ
 local function AutoStoreFruits()
     if not Config.AutoStoreFruit then return end
     pcall(function()
         local CommF = ReplicatedStorage.Remotes.CommF_
-        local containers = { LocalPlayer.Backpack, LocalPlayer.Character }
-        for _, container in ipairs(containers) do
+        for _, container in ipairs({ LocalPlayer.Backpack, LocalPlayer.Character }) do
             if container then
                 for _, item in ipairs(container:GetChildren()) do
                     if item:IsA("Tool") and string.find(item.Name, "Fruit") then
@@ -270,10 +212,10 @@ local function CheckAndCollectFruit()
     return false
 end
 
--- 9. FSM State Actions
+-- 8. FSM Actions
 local Actions = {
     IDLE = function()
-        if GetCurrentSeaKey() ~= "Sea1" then
+        if game.PlaceId ~= 2753915549 then
             SetUI("TELEPORTING TO SEA 1...")
             pcall(function() ReplicatedStorage.Remotes.CommF_:InvokeServer("TravelMain") end)
             task.wait(3)
@@ -282,16 +224,6 @@ local Actions = {
 
         if HandleSea1Progression() then return end
 
-        -- Kiểm tra random trái định kỳ
-        if Config.AutoRandomFruit and (tick() - FSM.LastRandomTick > 156) then
-            local beli = 0
-            pcall(function() beli = LocalPlayer.Data.Beli.Value end)
-            if beli >= (Config.MinBeliToRandom or 500000) then
-                ChangeState("RANDOM_FRUIT", "RANDOM_FRUIT")
-                return
-            end
-        end
-
         if HasActiveQuest() then
             ChangeState("FARM_MOB", "FARMING")
         else
@@ -299,15 +231,7 @@ local Actions = {
         end
     end,
 
-    RANDOM_FRUIT = function()
-        FSM.LastRandomTick = tick()
-        pcall(function() ReplicatedStorage.Remotes.CommF_:InvokeServer("Cousin", "Buy") end)
-        task.wait(1.5)
-        ChangeState("IDLE", "IDLE")
-    end,
-
     GET_QUEST = function()
-        if HandleSea1Progression() then return end
         if HasActiveQuest() then
             ChangeState("FARM_MOB", "FARMING")
             return
@@ -346,51 +270,22 @@ local Actions = {
         end
 
         if targetMob then
-            SetUI("KILLING MOB: " .. q.Mob)
-            AttackTarget(targetMob)
-        else
-            SetUI("WAITING SPAWN: " .. q.Mob)
-            StableFlyTo(q.MobCFrame)
-        end
-    end,
-
-    SEA2_QUEST = function()
-        local CommF = ReplicatedStorage.Remotes.CommF_
-        local prog = CommF:InvokeServer("DressrosaQuestProgress")
-
-        if prog and prog.UsedKey and prog.KilledIceBoss then
-            SetUI("TRAVELING TO SEA 2...")
-            CommF:InvokeServer("TravelDressrosa")
-            task.wait(5)
-            return
-        end
-
-        if not prog or not prog.TalkedDetective then
-            CommF:InvokeServer("DressrosaQuestProgress", "Detective")
-            task.wait(1)
-        end
-
-        if not prog or not prog.UsedKey then
-            local key = LocalPlayer.Backpack:FindFirstChild("Key") or (LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Key"))
-            if key and LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid") then
-                LocalPlayer.Character.Humanoid:EquipTool(key)
-                StableFlyTo(CFrame.new(1347, 37, -1325))
-                CommF:InvokeServer("DressrosaQuestProgress", "UseKey")
-                task.wait(1)
+            SetUI("FARMING: " .. q.Mob)
+            AutoEquipWeapon()
+            local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+            if hrp and targetMob:FindFirstChild("HumanoidRootPart") then
+                hrp.CFrame = targetMob.HumanoidRootPart.CFrame * CFrame.new(0, 10, 0)
+                local tool = LocalPlayer.Character:FindFirstChildOfClass("Tool") or LocalPlayer.Backpack:FindFirstChildOfClass("Tool")
+                if tool then tool:Activate() end
             end
-        end
-
-        local boss = workspace:FindFirstChild("Enemies") and workspace.Enemies:FindFirstChild("Ice Admiral")
-        if boss and boss:FindFirstChild("Humanoid") and boss.Humanoid.Health > 0 then
-            SetUI("KILLING: Ice Admiral")
-            AttackTarget(boss)
         else
-            StableFlyTo(CFrame.new(1347, 37, -1325))
+            SetUI("FLY TO MOB SPOT")
+            StableFlyTo(q.MobCFrame)
         end
     end
 }
 
--- 10. Vòng Lặp Điều Phối Chính (Chống Crash)
+-- 9. Vòng Lặp Chính
 task.spawn(function()
     while true do
         if FSM.Running then
@@ -401,8 +296,9 @@ task.spawn(function()
                 if action then
                     local ok, err = pcall(action)
                     if not ok then
-                        warn("[FSM CRITICAL ERROR]:", err)
-                        SetUI("CRITICAL ERR")
+                        warn("[FSM ERROR]:", err)
+                        SetUI("ERROR RECOVERY")
+                        task.wait(1)
                     end
                 else
                     FSM.State = "IDLE"
