@@ -1,4 +1,4 @@
--- fsm.lua — Bản FSM Thông minh (Không phụ thuộc GUI, Tự tìm quái)
+-- fsm.lua — Bản hoàn thiện: Tự động đánh bằng Net module + Bay trên đầu quái
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
@@ -18,9 +18,11 @@ local function notify(msg)
 end
 
 local CONFIG = {
-    FlySpeed = 150, FarmRetryDelay = 1.5, MobOffsetY = 5,
+    FlySpeed = 150, MobOffsetY = 20, -- 🔥 Nâng Y lên 20 để bay trên đầu quái
     MobRadius = 300, QuestCacheTTL = 10, WeaponType = "Melee",
 }
+
+-- Load config từ file JSON (nếu có)
 do
     local ok, raw = pcall(function() return game:HttpGet(BASE_URL .. "config.json") end)
     if ok and type(raw) == "string" and #raw > 0 then
@@ -83,7 +85,7 @@ local function flyTo(targetCFrame)
         ActiveTween.Completed:Wait()
         ActiveTween = nil
     end
-    task.wait(0.5)
+    task.wait(0.3)
     setCanCollide(true)
 end
 
@@ -158,20 +160,34 @@ local function AutoEquipWeapon()
     return false
 end
 
-local function AttackMob(targetRoot)
+-- 🔥 HÀM ĐÁNH QUÁI CHUẨN (Dùng Net module để gây sát thương thực tế)
+local function AttackMob(targetModel, targetRoot)
     local char = LocalPlayer.Character
     if not char then return end
-    local tool = char:FindFirstChildOfClass("Tool")
-    if not tool then return end
-    pcall(function() tool:Activate() end)
-    if targetRoot then
-        pcall(function()
-            local cam = workspace.CurrentCamera
-            local pos, onScreen = cam:WorldToViewportPoint(targetRoot.Position)
-            if onScreen then
-                VirtualUser:ClickButton1(Vector2.new(pos.X, pos.Y))
-            end
-        end)
+    
+    -- Cách 1: Dùng Net module của Blox Fruits (Đánh xuyên qua mọi loại vũ khí)
+    local ok, success = pcall(function()
+        local net = require(ReplicatedStorage:WaitForChild("Modules"):WaitForChild("Net"))
+        local hitList = {{targetModel, targetRoot}}
+        
+        net["RE/RegisterAttack"]:FireServer(0.1)
+        net["RE/RegisterHit"]:FireServer(targetRoot, hitList)
+        return true
+    end)
+    
+    -- Cách 2: Dự phòng (Nếu Net bị lỗi hoặc chưa load kịp)
+    if not ok or not success then
+        local tool = char:FindFirstChildOfClass("Tool")
+        if tool then
+            pcall(function() tool:Activate() end)
+            pcall(function()
+                local cam = workspace.CurrentCamera
+                local pos, onScreen = cam:WorldToViewportPoint(targetRoot.Position)
+                if onScreen then
+                    VirtualUser:ClickButton1(Vector2.new(pos.X, pos.Y))
+                end
+            end)
+        end
     end
 end
 
@@ -185,8 +201,6 @@ end)
 local function setState(s)
     if State ~= s then State = s end
 end
-
--- ================= CÁC TRẠNG THÁI =================
 
 local function stateIdle()
     stopActiveTween()
@@ -205,14 +219,12 @@ local function stateGetQuest()
     local npc = Vector3.new(q.NPC[1], q.NPC[2], q.NPC[3])
     flyTo(CFrame.new(npc))
     
-    -- Bấm nhận Quest 2 lần cho chắc chắn
     pcall(function()
         ReplicatedStorage.Remotes.CommF_:InvokeServer("StartQuest", q.QuestName, q.QuestLv)
     end)
     task.wait(1)
     
-    -- Dù GUI có hiện hay không, cứ chuyển sang đánh quái
-    notify("✅ Đã bấm nhận Quest, di chuyển ra bãi quái!")
+    notify("✅ Đã nhận Quest, di chuyển ra bãi quái!")
     setState("FARM_MOB")
 end
 
@@ -221,60 +233,55 @@ local function stateFarmMob()
     if not currentQuest then setState("GET_QUEST"); return end
 
     local mobPos = Vector3.new(currentQuest.MobPos[1], currentQuest.MobPos[2], currentQuest.MobPos[3])
-    local target = CFrame.new(mobPos + Vector3.new(0, 10, 0))
+    local target = CFrame.new(mobPos + Vector3.new(0, CONFIG.MobOffsetY, 0))
     
     notify("Đang tới bãi quái: " .. currentQuest.Mob)
     flyTo(target)
     if not isRunning then setState("IDLE"); return end
 
     local char, hrp = getCharacter()
-    if hrp then
-        hrp.CFrame = target
-        hrp.AssemblyLinearVelocity = Vector3.zero
-    end
     AutoEquipWeapon()
 
     local noEnemyTime = 0
-    local farmEnd = tick() + 120 -- Farm tối đa 2 phút rồi check lại
+    local farmEnd = tick() + 120
 
     while isRunning and tick() < farmEnd do
         if not hrp or not hrp.Parent then break end
 
-        -- Tự động tìm quái xung quanh (bán kính 300)
         local enemies = GetEnemiesInRadius(hrp.Position, 300)
         
         if #enemies == 0 then
-            noEnemyTime = noEnemyTime + 0.2
-            -- Nếu 15 giây không thấy quái -> Hết quái/Hết quest -> Về nhận quest mới
+            noEnemyTime = noEnemyTime + 0.1
             if noEnemyTime > 15 then 
-                notify("Hết quái xung quanh, tìm Quest mới!")
+                notify("Hết quái, tìm Quest mới!")
                 setState("GET_QUEST")
                 return
             end
+            -- Nếu không có quái, bay lơ lửng ở vị trí bãi quái
+            hrp.CFrame = target
+            hrp.AssemblyLinearVelocity = Vector3.zero
             task.wait(0.2)
         else
             noEnemyTime = 0
-            -- Nếu thấy quái, bay thẳng tới con quái gần nhất
             local nearest = enemies[1]
+            
+            -- 🔥 BÁM THEO QUÁI VÀ BAY TRÊN ĐẦU NÓ
             if nearest and nearest.root then
-                local targetMob = CFrame.new(nearest.root.Position + Vector3.new(0, 5, 0))
-                hrp.CFrame = hrp.CFrame:Lerp(targetMob, 0.2)
+                -- Lấy vị trí quái + 20 studs trục Y (trên đầu)
+                local targetMob = CFrame.new(nearest.root.Position + Vector3.new(0, CONFIG.MobOffsetY, 0))
+                hrp.CFrame = hrp.CFrame:Lerp(targetMob, 0.3) -- Bay mượt bám theo
+                hrp.AssemblyLinearVelocity = Vector3.zero
             end
             
-            -- Đánh quái
-            for _, e in ipairs(enemies) do
-                if not isRunning then break end
-                if e.humanoid.Health <= 0 then break end
-                AttackMob(e.root)
-                task.wait(0.05)
-            end
+            -- Đánh con quái gần nhất liên tục
+            AttackMob(nearest.model, nearest.root)
+            
+            task.wait(0.1) -- Tốc độ đánh
         end
         task.wait(0.05)
     end
 
-    if isRunning then
-        setState("GET_QUEST")
-    end
+    if isRunning then setState("GET_QUEST") end
 end
 
 local handlers = { IDLE = stateIdle, GET_QUEST = stateGetQuest, FARM_MOB = stateFarmMob }
