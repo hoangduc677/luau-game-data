@@ -1,6 +1,6 @@
 {
     "Sea1": [
-        { "MinLv": 1, "QuestName": "BanditQuest1", "QuestLv": 1, "Mob": "Bandit", "NPC": [-1060, 6, 4066], "MobPos": [-1223, 10, 4033] },
+        { "MinLv": 1, "QuestName": "BanditQuest1", "QuestLv": 1, "Mob": "Bandit", "NPC": [-1060, 16, 4066], "MobPos": [-1223, 16, 4033] },
         { "MinLv": 10, "QuestName": "JungleQuest", "QuestLv": 1, "Mob": "Monkey", "NPC": [-1598, 36, 153], "MobPos": [-1448, 50, 63] },
         { "MinLv": 15, "QuestName": "JungleQuest", "QuestLv": 2, "Mob": "Gorilla", "NPC": [-1598, 36, 153], "MobPos": [-1129, 40, -525] },
         { "MinLv": 30, "QuestName": "BuggyQuest1", "QuestLv": 1, "Mob": "Pirate", "NPC": [-1140, 4, 3828], "MobPos": [-1201, 40, 3916] },
