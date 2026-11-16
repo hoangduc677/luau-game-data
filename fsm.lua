@@ -1,4 +1,4 @@
--- fsm.lua — Bản hoàn thiện (Fix crash, bay trên đầu quái, đánh bằng Net)
+-- fsm.lua — Bản hoàn thiện: Fix chết nhận lại Quest + Auto Attack Mobile
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
@@ -18,11 +18,8 @@ local function notify(msg)
 end
 
 local CONFIG = {
-    FlySpeed = 150, 
-    MobOffsetY = 15, -- Bay cao hơn đầu quái 15 studs
-    MobRadius = 300, 
-    QuestCacheTTL = 10, 
-    WeaponType = "Melee",
+    FlySpeed = 150, MobOffsetY = 15, MobRadius = 300, 
+    QuestCacheTTL = 10, WeaponType = "Melee",
 }
 
 do
@@ -39,11 +36,34 @@ local State = "IDLE"
 local isRunning = true
 local ActiveTween = nil
 local currentQuest = nil
+local isDead = false -- 🔥 Cờ đánh dấu nhân vật đã chết
 
--- 🔥 LẤY NET MODULE 1 LẦN DUY NHẤT (Tránh crash game)
-local Net
-pcall(function()
-    Net = require(ReplicatedStorage:WaitForChild("Modules"):WaitForChild("Net"))
+-- Kiểm tra xem nhân vật có đang chết không và chờ hồi sinh
+local function bindCharacter(char)
+    local hum = char:WaitForChild("Humanoid", 5)
+    if hum then
+        hum.Died:Connect(function()
+            isDead = true
+            stopActiveTween()
+            setCanCollide(true)
+            notify("☠️ Nhân vật đã chết, đang chờ hồi sinh...")
+        end)
+    end
+end
+
+if LocalPlayer.Character then bindCharacter(LocalPlayer.Character) end
+LocalPlayer.CharacterAdded:Connect(function(char)
+    isDead = false
+    bindCharacter(char)
+    task.wait(1) -- Chờ load map
+    if isRunning then
+        if currentQuest then
+            notify("Hồi sinh! Tiếp tục đi đánh quái (không nhận lại Quest).")
+            setState("FARM_MOB")
+        else
+            setState("GET_QUEST")
+        end
+    end
 end)
 
 local function getCharacter()
@@ -59,20 +79,17 @@ local function stopActiveTween()
     end
 end
 
--- Tắt va chạm (CanCollide) để xuyên qua vật thể và quái
 local function setCanCollide(v)
     local char = LocalPlayer.Character
     if not char then return end
     for _, part in ipairs(char:GetDescendants()) do
-        if part:IsA("BasePart") then
-            part.CanCollide = v
-        end
+        if part:IsA("BasePart") then part.CanCollide = v end
     end
 end
 
 local function flyTo(targetCFrame)
     stopActiveTween()
-    if not isRunning then return end
+    if not isRunning or isDead then return end
     local char, hrp = getCharacter()
     if not hrp then return end
     
@@ -81,8 +98,6 @@ local function flyTo(targetCFrame)
     
     setCanCollide(false)
     hrp.AssemblyLinearVelocity = Vector3.zero
-    
-    -- Điểm đến an toàn (cộng thêm Y)
     local safeTarget = targetCFrame + Vector3.new(0, 10, 0)
     
     if dist > 500 then
@@ -96,12 +111,22 @@ local function flyTo(targetCFrame)
         ActiveTween.Completed:Wait()
         ActiveTween = nil
     end
-    -- LƯU Ý: Không bật lại CanCollide ở đây để không bị rớt xuống đất
 end
 
 local function GetPlayerLevel()
     local ok, lv = pcall(function() return LocalPlayer.Data.Level.Value end)
     return ok and tonumber(lv) or 1
+end
+
+-- 🔥 HÀM KIỂM TRA NHIỆM VỤ ĐANG CÓ (Chống nhận lại)
+local function GetActiveQuestName()
+    local ok, result = pcall(function()
+        return ReplicatedStorage.Remotes.CommF_:InvokeServer("CheckQuest")
+    end)
+    if ok and type(result) == "string" and result ~= "" then
+        return result
+    end
+    return nil
 end
 
 local _questsCache, _questsCacheTime = nil, 0
@@ -154,42 +179,42 @@ local function GetEnemiesInRadius(origin, radius)
 end
 
 local function AutoEquipWeapon()
-    local weaponType = CONFIG.WeaponType or "Melee"
-    local char = LocalPlayer.Character
-    if not char then return false end
-    local cur = char:FindFirstChildOfClass("Tool")
-    if cur and (cur:GetAttribute("WeaponType") == weaponType or cur.ToolTip == weaponType) then return true end
-    local backpack = LocalPlayer:FindFirstChild("Backpack")
-    if not backpack then return false end
-    for _, tool in ipairs(backpack:GetChildren()) do
-        if tool:IsA("Tool") and (tool:GetAttribute("WeaponType") == weaponType or tool.ToolTip == weaponType) then
-            local hum = char:FindFirstChildOfClass("Humanoid")
-            if hum then hum:EquipTool(tool); task.wait(0.1); return true end
-        end
-    end
-    return false
-end
-
--- 🔥 HÀM ĐÁNH QUÁI (Không còn spam require, gây sát thương thật)
-local function AttackMob(targetModel, targetRoot)
     local char = LocalPlayer.Character
     if not char then return end
-    if not targetRoot or not targetRoot.Parent then return end
-    
-    -- Đánh bằng Net module (Chuẩn Blox Fruits)
-    if Net then
-        pcall(function()
-            local hitList = {{targetModel, targetRoot}}
-            Net["RE/RegisterAttack"]:FireServer(0.1)
-            Net["RE/RegisterHit"]:FireServer(targetRoot, hitList)
-        end)
+    if char:FindFirstChildOfClass("Tool") then return end
+    local backpack = LocalPlayer:FindFirstChild("Backpack")
+    if not backpack then return end
+    for _, tool in ipairs(backpack:GetChildren()) do
+        if tool:IsA("Tool") then
+            local hum = char:FindFirstChildOfClass("Humanoid")
+            if hum then hum:EquipTool(tool); task.wait(0.1); return end
+        end
     end
+end
+
+local function AttackMob(targetModel, targetRoot)
+    local char = LocalPlayer.Character
+    if not char or not targetRoot or not targetRoot.Parent then return end
     
-    -- Kích hoạt Tool dự phòng (để vung vũ khí)
     local tool = char:FindFirstChildOfClass("Tool")
     if tool then
         pcall(function() tool:Activate() end)
+        pcall(function()
+            local cam = workspace.CurrentCamera
+            local pos, onScreen = cam:WorldToViewportPoint(targetRoot.Position)
+            if onScreen then
+                VirtualUser:Button1Down(Vector2.new(pos.X, pos.Y))
+                VirtualUser:Button1Up(Vector2.new(pos.X, pos.Y))
+            end
+        end)
     end
+    
+    pcall(function()
+        local Net = require(ReplicatedStorage:WaitForChild("Modules"):WaitForChild("Net"))
+        local hitList = {{targetModel, targetRoot}}
+        Net["RE/RegisterAttack"]:FireServer(0)
+        Net["RE/RegisterHit"]:FireServer(targetRoot, hitList)
+    end)
 end
 
 LocalPlayer.Idled:Connect(function()
@@ -205,13 +230,33 @@ end
 
 local function stateIdle()
     stopActiveTween()
-    setCanCollide(true) -- Bật lại va chạm khi đứng chờ
+    setCanCollide(true)
     task.wait(0.5)
-    if isRunning then setState("GET_QUEST") end
+    if isRunning and not isDead then setState("GET_QUEST") end
 end
 
 local function stateGetQuest()
-    if not isRunning then setState("IDLE"); return end
+    if not isRunning or isDead then setState("IDLE"); return end
+    
+    -- 🔥 KIỂM TRA: Nếu đang có quest rồi thì không nhận lại
+    local activeName = GetActiveQuestName()
+    if activeName then
+        local quests = LoadQuests()
+        for _, q in ipairs(quests) do
+            if activeName:find(q.QuestName) then
+                currentQuest = q
+                notify("Đang có Quest sẵn: " .. q.QuestName .. ", ra đánh tiếp!")
+                setState("FARM_MOB")
+                return
+            end
+        end
+        -- Nếu có quest nhưng không tìm thấy trong danh sách (VD: quest custom)
+        if currentQuest then
+            setState("FARM_MOB")
+            return
+        end
+    end
+
     local lv = GetPlayerLevel()
     local q = PickQuest(lv)
     if not q then task.wait(2); setState("IDLE"); return end
@@ -220,8 +265,6 @@ local function stateGetQuest()
     notify("Đang tới NPC: " .. q.QuestName)
     local npc = Vector3.new(q.NPC[1], q.NPC[2], q.NPC[3])
     flyTo(CFrame.new(npc))
-    
-    -- Bật lại va chạm để không rớt qua map ở NPC
     setCanCollide(true)
     
     pcall(function()
@@ -234,7 +277,7 @@ local function stateGetQuest()
 end
 
 local function stateFarmMob()
-    if not isRunning then setState("IDLE"); return end
+    if not isRunning or isDead then setState("IDLE"); return end
     if not currentQuest then setState("GET_QUEST"); return end
 
     local mobPos = Vector3.new(currentQuest.MobPos[1], currentQuest.MobPos[2], currentQuest.MobPos[3])
@@ -242,19 +285,21 @@ local function stateFarmMob()
     
     notify("Đang tới bãi quái: " .. currentQuest.Mob)
     flyTo(target)
-    if not isRunning then setState("IDLE"); return end
+    if not isRunning or isDead then setState("IDLE"); return end
 
     local char, hrp = getCharacter()
     AutoEquipWeapon()
-
-    -- 🔥 TẮT VA CHẠM ĐỂ BAY LƠ LỬNG TRÊN ĐẦU QUÁI
     setCanCollide(false) 
 
     local noEnemyTime = 0
     local farmEnd = tick() + 120
+    local diedDuringFarm = false
 
     while isRunning and tick() < farmEnd do
-        if not hrp or not hrp.Parent then break end
+        if isDead or not hrp or not hrp.Parent then 
+            diedDuringFarm = true
+            break 
+        end
 
         local enemies = GetEnemiesInRadius(hrp.Position, 300)
         
@@ -265,7 +310,6 @@ local function stateFarmMob()
                 setState("GET_QUEST")
                 return
             end
-            -- Giữ nhân vật lơ lửng ở bãi quái
             hrp.CFrame = target
             hrp.AssemblyLinearVelocity = Vector3.zero
             task.wait(0.2)
@@ -274,21 +318,20 @@ local function stateFarmMob()
             local nearest = enemies[1]
             
             if nearest and nearest.root then
-                -- 🔥 BÁM THEO QUÁI: Gim thẳng CFrame lên đầu quái (Không dùng Lerp gây giật)
                 local targetMob = CFrame.new(nearest.root.Position + Vector3.new(0, CONFIG.MobOffsetY, 0))
                 hrp.CFrame = targetMob
                 hrp.AssemblyLinearVelocity = Vector3.zero
-                
-                -- Đánh quái liên tục
                 AttackMob(nearest.model, nearest.root)
             end
-            
-            task.wait(0.15) -- Tốc độ đánh (Chỉnh số này nhỏ hơn để đánh nhanh hơn)
+            task.wait(0.1)
         end
         task.wait(0.05)
     end
 
-    if isRunning then setState("GET_QUEST") end
+    -- 🔥 Nếu chết giữa chừng thì không chuyển State, chờ hồi sinh
+    if not diedDuringFarm and isRunning then 
+        setState("GET_QUEST") 
+    end
 end
 
 local handlers = { IDLE = stateIdle, GET_QUEST = stateGetQuest, FARM_MOB = stateFarmMob }
@@ -299,6 +342,9 @@ task.spawn(function()
             stopActiveTween()
             setCanCollide(true)
             setState("IDLE")
+            task.wait(0.5)
+        elseif isDead then
+            -- Chờ hồi sinh
             task.wait(0.5)
         else
             local fn = handlers[State]
