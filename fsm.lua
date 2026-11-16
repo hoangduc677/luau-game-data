@@ -1,4 +1,4 @@
--- fsm.lua — Bản hoàn thiện: Tự động đánh bằng Net module + Bay trên đầu quái
+-- fsm.lua — Bản hoàn thiện (Fix crash, bay trên đầu quái, đánh bằng Net)
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
@@ -18,11 +18,13 @@ local function notify(msg)
 end
 
 local CONFIG = {
-    FlySpeed = 150, MobOffsetY = 20, -- 🔥 Nâng Y lên 20 để bay trên đầu quái
-    MobRadius = 300, QuestCacheTTL = 10, WeaponType = "Melee",
+    FlySpeed = 150, 
+    MobOffsetY = 15, -- Bay cao hơn đầu quái 15 studs
+    MobRadius = 300, 
+    QuestCacheTTL = 10, 
+    WeaponType = "Melee",
 }
 
--- Load config từ file JSON (nếu có)
 do
     local ok, raw = pcall(function() return game:HttpGet(BASE_URL .. "config.json") end)
     if ok and type(raw) == "string" and #raw > 0 then
@@ -38,6 +40,12 @@ local isRunning = true
 local ActiveTween = nil
 local currentQuest = nil
 
+-- 🔥 LẤY NET MODULE 1 LẦN DUY NHẤT (Tránh crash game)
+local Net
+pcall(function()
+    Net = require(ReplicatedStorage:WaitForChild("Modules"):WaitForChild("Net"))
+end)
+
 local function getCharacter()
     local char = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
     local hrp = char:WaitForChild("HumanoidRootPart", 5)
@@ -51,11 +59,12 @@ local function stopActiveTween()
     end
 end
 
+-- Tắt va chạm (CanCollide) để xuyên qua vật thể và quái
 local function setCanCollide(v)
     local char = LocalPlayer.Character
     if not char then return end
     for _, part in ipairs(char:GetDescendants()) do
-        if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then
+        if part:IsA("BasePart") then
             part.CanCollide = v
         end
     end
@@ -72,6 +81,8 @@ local function flyTo(targetCFrame)
     
     setCanCollide(false)
     hrp.AssemblyLinearVelocity = Vector3.zero
+    
+    -- Điểm đến an toàn (cộng thêm Y)
     local safeTarget = targetCFrame + Vector3.new(0, 10, 0)
     
     if dist > 500 then
@@ -85,8 +96,7 @@ local function flyTo(targetCFrame)
         ActiveTween.Completed:Wait()
         ActiveTween = nil
     end
-    task.wait(0.3)
-    setCanCollide(true)
+    -- LƯU Ý: Không bật lại CanCollide ở đây để không bị rớt xuống đất
 end
 
 local function GetPlayerLevel()
@@ -160,34 +170,25 @@ local function AutoEquipWeapon()
     return false
 end
 
--- 🔥 HÀM ĐÁNH QUÁI CHUẨN (Dùng Net module để gây sát thương thực tế)
+-- 🔥 HÀM ĐÁNH QUÁI (Không còn spam require, gây sát thương thật)
 local function AttackMob(targetModel, targetRoot)
     local char = LocalPlayer.Character
     if not char then return end
+    if not targetRoot or not targetRoot.Parent then return end
     
-    -- Cách 1: Dùng Net module của Blox Fruits (Đánh xuyên qua mọi loại vũ khí)
-    local ok, success = pcall(function()
-        local net = require(ReplicatedStorage:WaitForChild("Modules"):WaitForChild("Net"))
-        local hitList = {{targetModel, targetRoot}}
-        
-        net["RE/RegisterAttack"]:FireServer(0.1)
-        net["RE/RegisterHit"]:FireServer(targetRoot, hitList)
-        return true
-    end)
+    -- Đánh bằng Net module (Chuẩn Blox Fruits)
+    if Net then
+        pcall(function()
+            local hitList = {{targetModel, targetRoot}}
+            Net["RE/RegisterAttack"]:FireServer(0.1)
+            Net["RE/RegisterHit"]:FireServer(targetRoot, hitList)
+        end)
+    end
     
-    -- Cách 2: Dự phòng (Nếu Net bị lỗi hoặc chưa load kịp)
-    if not ok or not success then
-        local tool = char:FindFirstChildOfClass("Tool")
-        if tool then
-            pcall(function() tool:Activate() end)
-            pcall(function()
-                local cam = workspace.CurrentCamera
-                local pos, onScreen = cam:WorldToViewportPoint(targetRoot.Position)
-                if onScreen then
-                    VirtualUser:ClickButton1(Vector2.new(pos.X, pos.Y))
-                end
-            end)
-        end
+    -- Kích hoạt Tool dự phòng (để vung vũ khí)
+    local tool = char:FindFirstChildOfClass("Tool")
+    if tool then
+        pcall(function() tool:Activate() end)
     end
 end
 
@@ -204,6 +205,7 @@ end
 
 local function stateIdle()
     stopActiveTween()
+    setCanCollide(true) -- Bật lại va chạm khi đứng chờ
     task.wait(0.5)
     if isRunning then setState("GET_QUEST") end
 end
@@ -215,16 +217,19 @@ local function stateGetQuest()
     if not q then task.wait(2); setState("IDLE"); return end
     currentQuest = q
 
-    notify("Đang tới NPC nhận Quest: " .. q.QuestName)
+    notify("Đang tới NPC: " .. q.QuestName)
     local npc = Vector3.new(q.NPC[1], q.NPC[2], q.NPC[3])
     flyTo(CFrame.new(npc))
+    
+    -- Bật lại va chạm để không rớt qua map ở NPC
+    setCanCollide(true)
     
     pcall(function()
         ReplicatedStorage.Remotes.CommF_:InvokeServer("StartQuest", q.QuestName, q.QuestLv)
     end)
     task.wait(1)
     
-    notify("✅ Đã nhận Quest, di chuyển ra bãi quái!")
+    notify("✅ Đã nhận Quest, ra bãi đánh quái!")
     setState("FARM_MOB")
 end
 
@@ -242,6 +247,9 @@ local function stateFarmMob()
     local char, hrp = getCharacter()
     AutoEquipWeapon()
 
+    -- 🔥 TẮT VA CHẠM ĐỂ BAY LƠ LỬNG TRÊN ĐẦU QUÁI
+    setCanCollide(false) 
+
     local noEnemyTime = 0
     local farmEnd = tick() + 120
 
@@ -257,7 +265,7 @@ local function stateFarmMob()
                 setState("GET_QUEST")
                 return
             end
-            -- Nếu không có quái, bay lơ lửng ở vị trí bãi quái
+            -- Giữ nhân vật lơ lửng ở bãi quái
             hrp.CFrame = target
             hrp.AssemblyLinearVelocity = Vector3.zero
             task.wait(0.2)
@@ -265,18 +273,17 @@ local function stateFarmMob()
             noEnemyTime = 0
             local nearest = enemies[1]
             
-            -- 🔥 BÁM THEO QUÁI VÀ BAY TRÊN ĐẦU NÓ
             if nearest and nearest.root then
-                -- Lấy vị trí quái + 20 studs trục Y (trên đầu)
+                -- 🔥 BÁM THEO QUÁI: Gim thẳng CFrame lên đầu quái (Không dùng Lerp gây giật)
                 local targetMob = CFrame.new(nearest.root.Position + Vector3.new(0, CONFIG.MobOffsetY, 0))
-                hrp.CFrame = hrp.CFrame:Lerp(targetMob, 0.3) -- Bay mượt bám theo
+                hrp.CFrame = targetMob
                 hrp.AssemblyLinearVelocity = Vector3.zero
+                
+                -- Đánh quái liên tục
+                AttackMob(nearest.model, nearest.root)
             end
             
-            -- Đánh con quái gần nhất liên tục
-            AttackMob(nearest.model, nearest.root)
-            
-            task.wait(0.1) -- Tốc độ đánh
+            task.wait(0.15) -- Tốc độ đánh (Chỉnh số này nhỏ hơn để đánh nhanh hơn)
         end
         task.wait(0.05)
     end
@@ -289,7 +296,10 @@ local handlers = { IDLE = stateIdle, GET_QUEST = stateGetQuest, FARM_MOB = state
 task.spawn(function()
     while true do
         if not isRunning then
-            stopActiveTween(); setCanCollide(true); setState("IDLE"); task.wait(0.5)
+            stopActiveTween()
+            setCanCollide(true)
+            setState("IDLE")
+            task.wait(0.5)
         else
             local fn = handlers[State]
             if fn then pcall(fn) else setState("IDLE") end
