@@ -1,4 +1,4 @@
--- fsm.lua — Đã tối ưu cho Mobile (Teleport xa, Notification)
+-- fsm.lua — Đã fix lỗi rớt nước và nhận diện Quest
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
@@ -9,7 +9,6 @@ local StarterGui = game:GetService("StarterGui")
 local LocalPlayer = Players.LocalPlayer
 local BASE_URL = "https://raw.githubusercontent.com/hoangduc677/luau-game-data/main/"
 
--- ================= THÔNG BÁO (Dành cho Mobile) =================
 local function notify(msg)
     print("[FSM]", msg)
     pcall(function()
@@ -21,7 +20,6 @@ local function notify(msg)
     end)
 end
 
--- ================= CONFIG =================
 local CONFIG = {
     FlySpeed = 150, QuestCheckDelay = 1.5, QuestRetryMax = 3,
     FarmRetryDelay = 1.5, FarmTimeoutSec = 60, MobOffsetY = 5,
@@ -38,14 +36,12 @@ do
     end
 end
 
--- ================= STATE =================
 local State = "IDLE"
 local isRunning = true
 local ActiveTween = nil
 local currentQuest = nil
 local questRetryCount = 0
 
--- ================= HELPERS =================
 local function getCharacter()
     local char = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
     local hrp = char:WaitForChild("HumanoidRootPart", 5)
@@ -69,7 +65,7 @@ local function setCanCollide(v)
     end
 end
 
--- 🔥 HÀM BAY ĐÃ ĐƯỢC FIX (Teleport cho khoảng cách xa)
+-- 🔥 HÀM BAY ĐÃ FIX: Nâng Y lên 5 studs để không bị lọt xuống nước
 local function flyTo(targetCFrame)
     stopActiveTween()
     if not isRunning then return end
@@ -77,17 +73,20 @@ local function flyTo(targetCFrame)
     if not hrp then return end
     
     local dist = (targetCFrame.Position - hrp.Position).Magnitude
-    if dist < 2 then return end
+    if dist < 3 then return end
     
     setCanCollide(false)
     hrp.AssemblyLinearVelocity = Vector3.zero
     
-    if dist > 1000 then
-        -- Nếu xa hơn 1000 studs (qua biển) -> Teleport thẳng để tránh rớt/văng
-        hrp.CFrame = targetCFrame
-        task.wait(0.5) -- Chờ map load
+    -- Nâng tọa độ đích lên 5 studs để tiếp đất an toàn
+    local safeTarget = targetCFrame + Vector3.new(0, 5, 0)
+    
+    if dist > 500 then
+        -- Nếu xa hơn 500 studs -> Teleport thẳng
+        hrp.CFrame = safeTarget
+        task.wait(0.5) 
     else
-        -- Nếu gần -> Bay từ từ bằng Tween
+        -- Nếu gần -> Bay từ từ
         ActiveTween = TweenService:Create(hrp,
             TweenInfo.new(dist / CONFIG.FlySpeed, Enum.EasingStyle.Linear),
             { CFrame = targetCFrame })
@@ -96,8 +95,7 @@ local function flyTo(targetCFrame)
         ActiveTween = nil
     end
     
-    -- Chờ 0.3s trước khi bật lại CanCollide để tránh bị văng (fling)
-    task.wait(0.3)
+    task.wait(0.5) -- Chờ nhân vật rớt xuống đất an toàn
     setCanCollide(true)
 end
 
@@ -109,7 +107,14 @@ local function HasActiveQuest()
         if not main then return false end
         local quest = main:FindFirstChild("Quest")
         if not quest then return false end
-        return quest.Visible == true
+        
+        if quest.Visible then return true end
+        -- Fallback: Kiểm tra xem có chữ nhiệm vụ không (đề phòng UI bị ẩn)
+        local title = quest:FindFirstChild("Title")
+        if title and title:IsA("TextLabel") and title.Text ~= "" then
+            return true
+        end
+        return false
     end)
     return ok and result == true
 end
@@ -124,7 +129,6 @@ local function GetPlayerBeli()
     return ok and tonumber(b) or 0
 end
 
--- ================= LOAD QUESTS =================
 local _questsCache, _questsCacheTime = nil, 0
 local function LoadQuests(forceRefresh)
     if not forceRefresh and _questsCache and (tick() - _questsCacheTime < CONFIG.QuestCacheTTL) then
@@ -158,7 +162,6 @@ local function PickQuest(playerLevel)
     return best
 end
 
--- ================= COMBAT =================
 local function GetEnemiesInRadius(origin, radius)
     radius = radius or CONFIG.MobRadius
     local result = {}
@@ -222,7 +225,6 @@ local function AttackMob(targetRoot)
     end
 end
 
--- ================= BACKGROUND =================
 LocalPlayer.Idled:Connect(function()
     pcall(function()
         VirtualUser:CaptureController()
@@ -252,7 +254,6 @@ task.spawn(function()
     end
 end)
 
--- ================= FSM =================
 local function setState(s)
     if State ~= s then
         print(string.format("[FSM] %s → %s", State, s))
@@ -284,27 +285,31 @@ local function stateGetQuest()
     local ok, err = pcall(function()
         ReplicatedStorage.Remotes.CommF_:InvokeServer("StartQuest", q.QuestName, q.QuestLv)
     end)
-    if not ok then
-        task.wait(1); setState("IDLE"); return
-    end
 
-    -- Chờ 1.5 giây cho GUI cập nhật (tăng từ 0.5s lên 1.5s cho an toàn)
+    -- Chờ 1.5 giây cho game load xong Quest
     task.wait(CONFIG.QuestCheckDelay)
 
+    -- Kiểm tra lại xem đã nhận được chưa
     if HasActiveQuest() then
         notify("✅ Đã nhận Quest: " .. q.QuestName)
         questRetryCount = 0
         setState("FARM_MOB")
     else
-        questRetryCount = questRetryCount + 1
-        if questRetryCount >= CONFIG.QuestRetryMax then
-            notify("❌ Lỗi nhận Quest. Thử lại sau!")
-            questRetryCount = 0
-            task.wait(2)
-            setState("IDLE")
+        -- Thử lại 1 lần nữa nếu thất bại
+        task.wait(1)
+        if HasActiveQuest() then
+            setState("FARM_MOB")
         else
-            task.wait(0.5)
-            setState("GET_QUEST")
+            questRetryCount = questRetryCount + 1
+            if questRetryCount >= CONFIG.QuestRetryMax then
+                notify("❌ Lỗi nhận Quest. Đang thử lại...")
+                questRetryCount = 0
+                task.wait(2)
+                setState("IDLE")
+            else
+                task.wait(0.5)
+                setState("GET_QUEST")
+            end
         end
     end
 end
@@ -359,7 +364,6 @@ local function stateFarmMob()
     end
 end
 
--- ================= LOOP =================
 local handlers = {
     IDLE = stateIdle, GET_QUEST = stateGetQuest, FARM_MOB = stateFarmMob,
 }
@@ -387,7 +391,6 @@ task.spawn(function()
     end
 end)
 
--- ================= API =================
 return {
     SetRunning = function(v)
         isRunning = v == true
