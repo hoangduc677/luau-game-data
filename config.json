@@ -1,15 +1,8 @@
 {
-    "AutoFarm": true,
-    "AutoRandomFruit": true,
-    "AutoStoreFruit": true,
-    "WeaponType": "Melee",
-    "FlySpeed": 150,
-    "MinBeliToRandom": 500000,
-    "QuestCheckDelay": 0.5,
-    "QuestRetryMax": 3,
-    "FarmRetryDelay": 1.5,
-    "FarmTimeoutSec": 60,
-    "MobOffsetY": 5,
-    "MobRadius": 60,
-    "QuestCacheTTL": 10
+  "AutoFarm": true,
+  "AutoRandomFruit": true,
+  "AutoStoreFruit": true,
+  "WeaponType": "Melee",
+  "FlySpeed": 150,
+  "MinBeliToRandom": 500000
 }
