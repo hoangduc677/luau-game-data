@@ -1,40 +1,90 @@
--- main.lua — Load toàn bộ hệ thống
+-- ============================================================
+-- main.lua  |  Kaitun Loader
+-- Fetch config + quests từ GitHub → khởi động UI + FSM.
+-- Đây là file duy nhất cần paste vào executor.
+-- ============================================================
+
 local BASE_URL = "https://raw.githubusercontent.com/hoangduc677/luau-game-data/main/"
 
--- Hàm load module an toàn
-local function loadModule(name)
-    local ok, raw = pcall(function() return game:HttpGet(BASE_URL .. name) end)
-    if not ok or type(raw) ~= "string" or #raw == 0 then
-        warn("[MAIN] Không tải được " .. name)
+-- ── Fetch JSON helper ────────────────────────────────────────
+local HttpService = game:GetService("HttpService")
+
+local function fetchJSON(path)
+    local ok, body = pcall(function()
+        return game:HttpGet(BASE_URL .. path)
+    end)
+    if not ok then
+        warn("[Kaitun] fetch failed: " .. path .. " – " .. tostring(body))
         return nil
     end
-    local fn, err = loadstring(raw)
-    if not fn then
-        warn("[MAIN] loadstring fail " .. name .. ": " .. tostring(err))
-        return nil
-    end
-    local ok2, result = pcall(fn)
+    local ok2, data = pcall(HttpService.JSONDecode, HttpService, body)
     if not ok2 then
-        warn("[MAIN] Chạy " .. name .. " fail: " .. tostring(result))
+        warn("[Kaitun] JSON decode failed: " .. path)
         return nil
     end
-    return result
+    return data
 end
 
--- Load FSM
-local FSM = loadModule("fsm.lua")
-if not FSM then
-    warn("[MAIN] ❌ Không load được fsm.lua — dừng")
-    return
+-- ── Fetch Lua module helper ───────────────────────────────────
+local function fetchModule(path)
+    local ok, body = pcall(function()
+        return game:HttpGet(BASE_URL .. path)
+    end)
+    if not ok then
+        warn("[Kaitun] module fetch failed: " .. path)
+        return nil
+    end
+    local fn, err = loadstring(body)
+    if not fn then
+        warn("[Kaitun] loadstring failed: " .. tostring(err))
+        return nil
+    end
+    return fn()
 end
 
--- Load UI
-local UI = loadModule("ui.lua")
+-- ── Load data ────────────────────────────────────────────────
+print("[Kaitun] Loading config…")
+local config = fetchJSON("config.json")
+if not config then
+    return warn("[Kaitun] Cannot load config. Abort.")
+end
+
+print("[Kaitun] Loading quests…")
+local quests = fetchJSON("quests.json")
+if not quests then
+    return warn("[Kaitun] Cannot load quests. Abort.")
+end
+
+-- ── Load modules ─────────────────────────────────────────────
+print("[Kaitun] Loading ui.lua…")
+local UI = fetchModule("ui.lua")
 if not UI then
-    warn("[MAIN] ❌ Không load được ui.lua — dừng")
-    return
+    return warn("[Kaitun] Cannot load UI. Abort.")
 end
 
--- Khởi tạo
-UI.Init(FSM)
-print("[MAIN] ✅ Kaitun đã khởi động")
+print("[Kaitun] Loading fsm.lua…")
+local FSM = fetchModule("fsm.lua")
+if not FSM then
+    return warn("[Kaitun] Cannot load FSM. Abort.")
+end
+
+-- ── Wire up ──────────────────────────────────────────────────
+local machine = FSM.new(config, quests, UI)
+
+-- Lắng nghe nút START từ UI để kích hoạt FSM
+-- (UI đã tự toggle isRunning; ta poll bằng vòng đơn giản)
+task.spawn(function()
+    local wasRunning = false
+    while true do
+        local running = UI.IsRunning()
+        if running and not wasRunning then
+            machine:Start()
+        elseif not running and wasRunning then
+            machine:Stop()
+        end
+        wasRunning = running
+        task.wait(0.2)
+    end
+end)
+
+print("[Kaitun] Ready ✔  Press START on the dashboard.")
