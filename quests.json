@@ -1,32 +1,186 @@
-{
-    "Sea1": [
-       { "MinLv": 1, "QuestName": "BanditQuest1", "QuestLv": 1, "Mob": "Bandit", "NPC": [1059, 16, 1549], "MobPos": [1145, 17, 1634] },
-        { "MinLv": 10, "QuestName": "JungleQuest", "QuestLv": 1, "Mob": "Monkey", "NPC": [-1598, 36, 153], "MobPos": [-1448, 50, 63] },
-        { "MinLv": 15, "QuestName": "JungleQuest", "QuestLv": 2, "Mob": "Gorilla", "NPC": [-1598, 36, 153], "MobPos": [-1129, 40, -525] },
-        { "MinLv": 30, "QuestName": "BuggyQuest1", "QuestLv": 1, "Mob": "Pirate", "NPC": [-1140, 4, 3828], "MobPos": [-1201, 40, 3916] },
-        { "MinLv": 40, "QuestName": "BuggyQuest1", "QuestLv": 2, "Mob": "Brute", "NPC": [-1140, 4, 3828], "MobPos": [-1145, 15, 4350] },
-        { "MinLv": 60, "QuestName": "DesertQuest", "QuestLv": 1, "Mob": "Desert Bandit", "NPC": [897, 6, 4389], "MobPos": [924, 7, 4482] },
-        { "MinLv": 75, "QuestName": "DesertQuest", "QuestLv": 2, "Mob": "Desert Officer", "NPC": [897, 6, 4389], "MobPos": [1608, 9, 4371] },
-        { "MinLv": 90, "QuestName": "SnowQuest", "QuestLv": 1, "Mob": "Snow Bandit", "NPC": [1385, 87, -1298], "MobPos": [1354, 87, -1393] },
-        { "MinLv": 100, "QuestName": "SnowQuest", "QuestLv": 2, "Mob": "Snowman", "NPC": [1385, 87, -1298], "MobPos": [1201, 144, -1550] },
-        { "MinLv": 120, "QuestName": "MarineQuest2", "QuestLv": 1, "Mob": "Chief Petty Officer", "NPC": [-5035, 29, 4326], "MobPos": [-4881, 23, 4273] },
-        { "MinLv": 150, "QuestName": "SkyQuest", "QuestLv": 1, "Mob": "Sky Bandit", "NPC": [-4842, 718, -2623], "MobPos": [-4953, 296, -2899] },
-        { "MinLv": 175, "QuestName": "SkyQuest", "QuestLv": 2, "Mob": "Dark Master", "NPC": [-4842, 718, -2623], "MobPos": [-5259, 391, -2229] },
-        { "MinLv": 190, "QuestName": "PrisonerQuest", "QuestLv": 1, "Mob": "Prisoner", "NPC": [5308, 2, 475], "MobPos": [5098, 2, 474] },
-        { "MinLv": 210, "QuestName": "PrisonerQuest", "QuestLv": 2, "Mob": "Dangerous Prisoner", "NPC": [5308, 2, 475], "MobPos": [5654, 16, 866] },
-        { "MinLv": 250, "QuestName": "ColosseumQuest", "QuestLv": 1, "Mob": "Toga Warrior", "NPC": [-1580, 7, -2986], "MobPos": [-1820, 51, -2740] },
-        { "MinLv": 275, "QuestName": "ColosseumQuest", "QuestLv": 2, "Mob": "Gladiator", "NPC": [-1580, 7, -2986], "MobPos": [-1292, 56, -3339] },
-        { "MinLv": 300, "QuestName": "MagmaQuest", "QuestLv": 1, "Mob": "Military Soldier", "NPC": [-5313, 12, 8515], "MobPos": [-5411, 11, 8454] },
-        { "MinLv": 325, "QuestName": "MagmaQuest", "QuestLv": 2, "Mob": "Military Spy", "NPC": [-5313, 12, 8515], "MobPos": [-5802, 86, 8828] },
-        { "MinLv": 375, "QuestName": "FishmanQuest", "QuestLv": 1, "Mob": "Fishman Warrior", "NPC": [61122, 18, 1569], "MobPos": [60878, 18, 1543] },
-        { "MinLv": 400, "QuestName": "FishmanQuest", "QuestLv": 2, "Mob": "Fishman Commando", "NPC": [61122, 18, 1569], "MobPos": [61922, 18, 1493] },
-        { "MinLv": 450, "QuestName": "SkyExp1Quest", "QuestLv": 1, "Mob": "God's Guard", "NPC": [-4721, 845, -1954], "MobPos": [-4628, 866, -1937] },
-        { "MinLv": 475, "QuestName": "SkyExp1Quest", "QuestLv": 2, "Mob": "Shanda", "NPC": [-7859, 5544, -381], "MobPos": [-7685, 5567, -502] },
-        { "MinLv": 525, "QuestName": "SkyExp2Quest", "QuestLv": 1, "Mob": "Royal Squad", "NPC": [-7904, 5636, -1412], "MobPos": [-7670, 5607, -1460] },
-        { "MinLv": 550, "QuestName": "SkyExp2Quest", "QuestLv": 2, "Mob": "Royal Soldier", "NPC": [-7904, 5636, -1412], "MobPos": [-7826, 5607, -1722] },
-        { "MinLv": 625, "QuestName": "FountainQuest", "QuestLv": 1, "Mob": "Galley Pirate", "NPC": [5259, 39, 4050], "MobPos": [5551, 78, 3930] },
-        { "MinLv": 650, "QuestName": "FountainQuest", "QuestLv": 2, "Mob": "Galley Captain", "NPC": [5259, 39, 4050], "MobPos": [5649, 39, 4936] }
-    ],
-    "Sea2": [],
-    "Sea3": []
-}
+[
+  {
+    "MinLv": 1,
+    "QuestName": "Bandit",
+    "QuestLv": 1,
+    "Mob": "Bandit",
+    "NPC": [916, 134, 1769],
+    "MobPos": [950, 130, 1800]
+  },
+  {
+    "MinLv": 15,
+    "QuestName": "Pirate",
+    "QuestLv": 15,
+    "Mob": "Pirate",
+    "NPC": [-1251, 125, -1065],
+    "MobPos": [-1200, 125, -1050]
+  },
+  {
+    "MinLv": 30,
+    "QuestName": "Monkey",
+    "QuestLv": 30,
+    "Mob": "Monkey",
+    "NPC": [2007, 29, -310],
+    "MobPos": [2050, 25, -270]
+  },
+  {
+    "MinLv": 50,
+    "QuestName": "Gorilla",
+    "QuestLv": 50,
+    "Mob": "Gorilla",
+    "NPC": [2007, 29, -310],
+    "MobPos": [1980, 25, -330]
+  },
+  {
+    "MinLv": 75,
+    "QuestName": "Brute",
+    "QuestLv": 75,
+    "Mob": "Brute",
+    "NPC": [-2621, 10, -336],
+    "MobPos": [-2580, 5, -310]
+  },
+  {
+    "MinLv": 100,
+    "QuestName": "Sword Carrier",
+    "QuestLv": 100,
+    "Mob": "Sword Carrier",
+    "NPC": [-2621, 10, -336],
+    "MobPos": [-2650, 5, -360]
+  },
+  {
+    "MinLv": 125,
+    "QuestName": "Desert Bandit",
+    "QuestLv": 125,
+    "Mob": "Desert Bandit",
+    "NPC": [-5004, 20, -1021],
+    "MobPos": [-5050, 15, -1000]
+  },
+  {
+    "MinLv": 150,
+    "QuestName": "Desert Pirate",
+    "QuestLv": 150,
+    "Mob": "Desert Pirate",
+    "NPC": [-5004, 20, -1021],
+    "MobPos": [-4970, 15, -1050]
+  },
+  {
+    "MinLv": 175,
+    "QuestName": "Marine Recruit",
+    "QuestLv": 175,
+    "Mob": "Marine Recruit",
+    "NPC": [-3176, 68, -764],
+    "MobPos": [-3150, 60, -750]
+  },
+  {
+    "MinLv": 190,
+    "QuestName": "Fishman",
+    "QuestLv": 190,
+    "Mob": "Fishman",
+    "NPC": [61932, 15, 1819],
+    "MobPos": [61950, 10, 1850]
+  },
+  {
+    "MinLv": 210,
+    "QuestName": "Shark Pirate",
+    "QuestLv": 210,
+    "Mob": "Shark Pirate",
+    "NPC": [61932, 15, 1819],
+    "MobPos": [61900, 10, 1800]
+  },
+  {
+    "MinLv": 230,
+    "QuestName": "Sky Bandit",
+    "QuestLv": 230,
+    "Mob": "Sky Bandit",
+    "NPC": [-5247, 596, 1017],
+    "MobPos": [-5200, 590, 1000]
+  },
+  {
+    "MinLv": 250,
+    "QuestName": "Heavy Musketeer",
+    "QuestLv": 250,
+    "Mob": "Heavy Musketeer",
+    "NPC": [-5247, 596, 1017],
+    "MobPos": [-5280, 590, 1040]
+  },
+  {
+    "MinLv": 275,
+    "QuestName": "Zombie Pirate",
+    "QuestLv": 275,
+    "Mob": "Zombie Pirate",
+    "NPC": [-3993, 69, 5006],
+    "MobPos": [-3970, 65, 5030]
+  },
+  {
+    "MinLv": 300,
+    "QuestName": "Vampire",
+    "QuestLv": 300,
+    "Mob": "Vampire",
+    "NPC": [-3993, 69, 5006],
+    "MobPos": [-4020, 65, 4980]
+  },
+  {
+    "MinLv": 325,
+    "QuestName": "Snow Bandit",
+    "QuestLv": 325,
+    "Mob": "Snow Bandit",
+    "NPC": [1241, 29, 5375],
+    "MobPos": [1270, 25, 5400]
+  },
+  {
+    "MinLv": 350,
+    "QuestName": "Snowman",
+    "QuestLv": 350,
+    "Mob": "Snowman",
+    "NPC": [1241, 29, 5375],
+    "MobPos": [1210, 25, 5350]
+  },
+  {
+    "MinLv": 375,
+    "QuestName": "Sea Soldier",
+    "QuestLv": 375,
+    "Mob": "Sea Soldier",
+    "NPC": [-2688, 25, 5399],
+    "MobPos": [-2660, 20, 5420]
+  },
+  {
+    "MinLv": 400,
+    "QuestName": "Scientist",
+    "QuestLv": 400,
+    "Mob": "Scientist",
+    "NPC": [4257, 32, 1600],
+    "MobPos": [4280, 28, 1630]
+  },
+  {
+    "MinLv": 450,
+    "QuestName": "Cyborg",
+    "QuestLv": 450,
+    "Mob": "Cyborg",
+    "NPC": [4257, 32, 1600],
+    "MobPos": [4230, 28, 1575]
+  },
+  {
+    "MinLv": 500,
+    "QuestName": "Dark Master",
+    "QuestLv": 500,
+    "Mob": "Dark Master",
+    "NPC": [-3959, 109, 2900],
+    "MobPos": [-3930, 105, 2920]
+  },
+  {
+    "MinLv": 575,
+    "QuestName": "Galley Pirate",
+    "QuestLv": 575,
+    "Mob": "Galley Pirate",
+    "NPC": [4994, 55, -6253],
+    "MobPos": [5020, 50, -6230]
+  },
+  {
+    "MinLv": 625,
+    "QuestName": "Galley Captain",
+    "QuestLv": 650,
+    "Mob": "Galley Captain",
+    "NPC": [4994, 55, -6253],
+    "MobPos": [4960, 50, -6280]
+  }
+]
